@@ -54,7 +54,6 @@ using DynamicPolynomials
 using MultivariateBases: maxdegree_basis, ProbabilistsHermite, PhysicistsHermite
 using LaTeXStrings
 using Roots
-using ProgressMeter
 
 include("Utils.jl")
 include("Systems.jl")
