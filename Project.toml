@@ -40,3 +40,6 @@ Roots = "3.0.0"
 Statistics = "1.11.1"
 Trapz = "2.0.3"
 julia = "1.11"
+
+[targets]
+test = ["Test"]
