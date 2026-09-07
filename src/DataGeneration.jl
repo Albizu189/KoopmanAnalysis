@@ -151,18 +151,7 @@ end
 """
     state_space_predict_from_psi(X_test, K, Psi_func, B_proj, start_indices, n_pred)
 
-State-space analogue of `edmd_predict_from_psi`.
-
-# Arguments
-- `X_test`: n_state × n_snap_test matrix of pre-computed test trajectories
-- `K`: nPsi × nPsi Koopman matrix
-- `Psi_func`: lifting function `Psi_func(x::Matrix) -> Ψ` (must accept n_state × 1)
-- `B_proj`: n_state × nPsi projection matrix
-- `start_indices`: vector of column indices in `X_test` to start predictions from
-- `n_pred`: number of steps to predict
-
-# Returns
-`(X_true, X_pred)` with shape `(n_state, n_pred+1, n_traj)`
+Predict state-space trajectories using pre-computed observable matrices.
 """
 function state_space_predict_from_psi(X_test::AbstractMatrix, K::AbstractMatrix,
                                       Psi_func::Function, B_proj::AbstractMatrix,
