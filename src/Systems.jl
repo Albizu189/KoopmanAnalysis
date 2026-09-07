@@ -44,13 +44,17 @@ function rk4(rhs, x0, dt, m; nLag=1)
     n_internal = nLag * m
     x = zeros(n, n_internal + 1)
     x[:, 1] .= x0_vec
+    tmp = Vector{Float64}(undef, n)
     for k in 1:n_internal
-        xk = x[:, k]
+        xk = @view x[:, k]
         k1 = rhs(xk)
-        k2 = rhs(xk .+ 0.5 * dt * k1)
-        k3 = rhs(xk .+ 0.5 * dt * k2)
-        k4 = rhs(xk .+ dt * k3)
-        x[:, k+1] .= xk .+ (dt / 6) * (k1 .+ 2 .* (k2 .+ k3) .+ k4)
+        @. tmp = xk + 0.5 * dt * k1
+        k2 = rhs(tmp)
+        @. tmp = xk + 0.5 * dt * k2
+        k3 = rhs(tmp)
+        @. tmp = xk + dt * k3
+        k4 = rhs(tmp)
+        @. x[:, k+1] = xk + (dt / 6) * (k1 + 2*(k2 + k3) + k4)
     end
     return x[:, 1:nLag:end]
 end
@@ -135,11 +139,15 @@ function euler_maruyama(drift, diffusion, x0, dt, m; nLag=1, seed=nothing)
     x = zeros(n, total_steps + 1)
     x[:, 1] .= x0_vec
     sqrt_dt = sqrt(dt)
+    dx_det = Vector{Float64}(undef, n)
+    dx_stoch = Vector{Float64}(undef, n)
+    dW = Vector{Float64}(undef, n)
     for k in 1:total_steps
-        xk = x[:, k]
-        dx_det = drift(xk) .* dt
-        dx_stoch = diffusion(xk) .* (sqrt_dt .* randn(n))
-        x[:, k+1] .= xk .+ dx_det .+ dx_stoch
+        xk = @view x[:, k]
+        @. dx_det = drift(xk) * dt
+        randn!(dW)
+        @. dx_stoch = diffusion(xk) * (sqrt_dt * dW)
+        @. x[:, k+1] = xk + dx_det + dx_stoch
     end
     return x[:, 1:nLag:end]
 end
