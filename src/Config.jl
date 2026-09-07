@@ -292,7 +292,7 @@ function spectrum(res::AnalysisResult; howmany::Int=200, krylovdim::Int=300, tol
     n = size(res.K, 1)
 
     # ── Small matrix: dense is faster and more reliable ──
-    if n < 10000
+    if n < 2000
         λ, Ξ = koopman_eigendecomposition(res.K)
         res.λ = λ
         res.Ξ = Ξ
