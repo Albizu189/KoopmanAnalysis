@@ -144,9 +144,9 @@ function euler_maruyama(drift, diffusion, x0, dt, m; nLag=1, seed=nothing)
     dW = Vector{Float64}(undef, n)
     for k in 1:total_steps
         xk = @view x[:, k]
-        @. dx_det = drift(xk) * dt
+        dx_det .= drift(xk) .* dt
         randn!(dW)
-        @. dx_stoch = diffusion(xk) * (sqrt_dt * dW)
+        dx_stoch .= diffusion(xk) .* (sqrt_dt .* dW)
         @. x[:, k+1] = xk + dx_det + dx_stoch
     end
     return x[:, 1:nLag:end]
