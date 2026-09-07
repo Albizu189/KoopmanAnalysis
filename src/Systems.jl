@@ -39,6 +39,7 @@ scheme.
 An `n×(m+1)` matrix whose columns are `x(0), x(dt*nLag), ..., x(dt*nLag*m)`.
 """
 function rk4(rhs, x0, dt, m; nLag=1)
+    dt > 0 || throw(ArgumentError("dt must be positive, got $dt"))
     x0_vec = vec(x0)
     n = length(x0_vec)
     n_internal = nLag * m
