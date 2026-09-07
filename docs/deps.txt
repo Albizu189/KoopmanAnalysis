@@ -1,0 +1,37 @@
+# Julia Package Dependencies for KoopmanAnalysis
+# Install with: julia -e 'using Pkg; Pkg.activate("."); Pkg.instantiate()'
+# Or manually add each package listed below.
+
+# Standard library (bundled with Julia)
+LinearAlgebra
+Statistics
+Random
+Printf
+
+# Plotting and visualization
+CairoMakie           v0.15.12    # Static plotting / figure export
+ColorSchemes         v3.31.0     # Plotting colour palettes
+LaTeXStrings         v1.4.0      # LaTeX labels in figures
+
+# Machine learning / clustering
+Clustering           v0.15.8     # k-means for RBF centres
+
+# Polynomials and multivariate bases
+DynamicPolynomials   v0.6.6      # Symbolic polynomials for Hermite bases
+MultivariateBases    v0.3.7      # Hermite basis types
+MultivariatePolynomials  v0.5.19  # Polynomial evaluation
+
+# Numerical methods
+Roots                v3.0.0      # Root finding for fixed points
+Trapz                v2.0.3      # Numerical integration
+KrylovKit            v0.10.4     # Iterative eigenvalue solver (Arnoldi)
+Distances            v0.10.12    # Distance metrics
+
+# Data I/O
+JLD2                 v0.6.4      # Saving/loading Julia data files
+
+# Manifold learning (optional)
+UMAP                 # (listed in Project.toml; not required for core functionality)
+
+# Julia version requirement
+julia >= 1.11
