@@ -46,6 +46,7 @@ function compute_koopman_operator(ΨX::AbstractMatrix, ΨY::AbstractMatrix;
     if method == :pinv
         K = pinv(ΨX') * ΨY'
     elseif method == :ridge
+        alpha < eps(Float64) && @warn "ridge alpha=$alpha is below machine epsilon; regularization may be ineffective"
         nPsi = size(ΨX, 1)
         K = (ΨX * ΨX' + float(alpha) * I(nPsi)) \ (ΨX * ΨY')
     else
