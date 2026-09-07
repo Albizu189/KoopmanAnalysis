@@ -205,19 +205,9 @@ end
 #      havok_predict).
 
 """
-    select_svd_rank(σ; method=:energy, energy=0.999, aspect=1.0)
+    select_svd_rank(σ; method=:energy, energy=0.99, threshold=1e-10, max_rank=nothing)
 
-Choose how many leading singular values / POD modes to keep, given the
-singular values `σ` in descending order.
-
-# Methods
-- `:energy` — smallest r whose modes capture the fraction `energy`
-  (e.g. 0.999) of the total energy Σσᵢ².
-- `:hard_threshold` — Gavish–Donoho optimal singular-value hard threshold
-  with unknown noise level: keep σᵢ > ω(β)·median(σ), with β = `aspect`
-  (min(m,n)/max(m,n)) and ω(β) ≈ 0.56β³ − 0.95β² + 1.82β + 1.43.
-- `:gap` — keep r at the largest relative drop (elbow) of the spectrum,
-  i.e. the argmax of diff(log σ).
+Select SVD rank from singular values σ using :energy, :hard_threshold, or :gap method.
 """
 function select_svd_rank(σ::AbstractVector; method::Symbol=:energy,
                          energy::Real=0.999, aspect::Real=1.0)
@@ -408,11 +398,9 @@ end
 # =============================================================================
 
 """
-    delay_embed_training_data(X_train, Y_train, m_embed, tau_delay; n_trajectories)
+    delay_embed_training_data(X_train, Y_train, m_embed, tau_delay; n_trajectories=1)
 
-Build delay-embedded EDMD training pairs from the output of `edmd_training_data`.
-Assumes trajectories are concatenated contiguously with equal length.
-Returns `(X_delay, Y_delay)` with shape `(n·m_embed, N_pairs)`.
+Build delay-embedded training matrices from multi-trajectory data.
 """
 function delay_embed_training_data(X_train::AbstractMatrix, Y_train::AbstractMatrix,
                                     m_embed::Int, tau_delay::Int;
