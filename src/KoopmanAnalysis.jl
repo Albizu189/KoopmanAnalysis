@@ -54,7 +54,6 @@ using DynamicPolynomials
 using MultivariateBases: maxdegree_basis, ProbabilistsHermite, PhysicistsHermite
 using LaTeXStrings
 using Roots
-using ProgressMeter
 
 include("Utils.jl")
 include("Systems.jl")
@@ -102,14 +101,15 @@ export
     # Dictionaries
     get_dim_psi, hermite_basis, Psi_Hermite,
     cluster_data, Psi_RBF, construct_projection_operator_hermite,
-    RFFBasis, build_rff_basis, Psi_RFF, lift_state,
+    RFFBasis, build_rff_basis, Psi_RFF, lift_state, Psi_slice,
     # EDMD
     compute_koopman_operator, construct_projection_operator,
     rbf_kernel, median_heuristic_sigma, kernel_feature_vector, kernel_edmd_rbf,
     edmd_predict_from_psi,
     # Hankel
-    build_hankel, hankel_dmd, hankel_edmd, delay_space_edmd_prediction,
-    havok_dmd, havok_predict,
+    build_hankel, hankel_dmd, hankel_edmd, hankel_kernel_edmd,
+    delay_space_edmd_prediction, havok_dmd, havok_predict,
+    select_svd_rank, build_hankel_multichannel, delay_embed_training_data,
     # DataGeneration
     edmd_training_data, hankel_training_data, state_space_predictions,
     delay_space_predictions, state_space_predict_from_psi,
