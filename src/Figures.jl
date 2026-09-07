@@ -70,8 +70,8 @@ function _extract_projection(X, projection_dims)
     return ntuple(i -> X[projection_dims[i], :], length(projection_dims))
 end
 
-function _axis_labels(dim)
-    return "x[$dim]"
+function _axis_labels(dim; dim_labels=nothing)
+    return isnothing(dim_labels) ? "x[$dim]" : dim_labels[dim]
 end
 
 function _limits_from_data(X, projection_dims; pad=0.1)
@@ -141,12 +141,15 @@ end
 
 function fig_training_data(X_train::AbstractMatrix;
                            dim::Int=2,
+                           dim_labels=nothing,
                            projection_dims=(1, 2),
                            title::String="Training data",
                            subtitle::Union{Nothing,String}=nothing,
                            param_str::Union{Nothing,String}=nothing)
     @assert dim in (2, 3) "dim must be 2 or 3"
     @assert length(projection_dims) == dim "projection_dims must have length $dim"
+
+    labels = isnothing(dim_labels) ? nothing : dim_labels
 
     # Compute actual title rows so the figure is not over-allocated
     n_title = 0
@@ -161,8 +164,8 @@ function fig_training_data(X_train::AbstractMatrix;
 
     if dim == 2
         ax = Axis(fig[row_start, 1],
-            xlabel=_axis_labels(projection_dims[1]), xlabelsize=14,
-            ylabel=_axis_labels(projection_dims[2]), ylabelsize=14
+            xlabel=_axis_labels(projection_dims[1]; dim_labels=labels), xlabelsize=14,
+            ylabel=_axis_labels(projection_dims[2]; dim_labels=labels), ylabelsize=14
             #title=title, titlesize=18, titlefont=:bold
             )
 
@@ -172,9 +175,9 @@ function fig_training_data(X_train::AbstractMatrix;
 
     else  # dim == 3
         ax = Axis3(fig[row_start, 1],
-            xlabel=_axis_labels(projection_dims[1]),
-            ylabel=_axis_labels(projection_dims[2]),
-            zlabel=_axis_labels(projection_dims[3])
+            xlabel=_axis_labels(projection_dims[1]; dim_labels=labels),
+            ylabel=_axis_labels(projection_dims[2]; dim_labels=labels),
+            zlabel=_axis_labels(projection_dims[3]; dim_labels=labels)
             # title=title, titlesize=18, titlefont=:bold
             )
 
@@ -193,12 +196,15 @@ end
 
 function fig_clusterized_data(X::AbstractMatrix, centers::AbstractMatrix;
                             dim::Int=2,
+                            dim_labels=nothing,
                             projection_dims=(1, 2),
                             title::String="RBF centres",
                             subtitle::Union{Nothing,String}=nothing,
                             param_str::Union{Nothing,String}=nothing)
     @assert dim in (2, 3) "dim must be 2 or 3"
     @assert length(projection_dims) == dim "projection_dims must have length $dim"
+
+    labels = isnothing(dim_labels) ? nothing : dim_labels
 
     n_title = 0
     !isempty(title) && (n_title += 1)
@@ -213,8 +219,8 @@ function fig_clusterized_data(X::AbstractMatrix, centers::AbstractMatrix;
 
     if dim == 2
         ax = Axis(fig[row_start, 1],
-            xlabel=_axis_labels(projection_dims[1]), xlabelsize=14,
-            ylabel=_axis_labels(projection_dims[2]), ylabelsize=14
+            xlabel=_axis_labels(projection_dims[1]; dim_labels=labels), xlabelsize=14,
+            ylabel=_axis_labels(projection_dims[2]; dim_labels=labels), ylabelsize=14
             # title=title, titlesize=18, titlefont=:bold
             )
 
@@ -228,9 +234,9 @@ function fig_clusterized_data(X::AbstractMatrix, centers::AbstractMatrix;
 
     else  # dim == 3
         ax = Axis3(fig[row_start, 1],
-            xlabel=_axis_labels(projection_dims[1]),
-            ylabel=_axis_labels(projection_dims[2]),
-            zlabel=_axis_labels(projection_dims[3])
+            xlabel=_axis_labels(projection_dims[1]; dim_labels=labels),
+            ylabel=_axis_labels(projection_dims[2]; dim_labels=labels),
+            zlabel=_axis_labels(projection_dims[3]; dim_labels=labels)
             # title=title, titlesize=18, titlefont=:bold
             )
 
