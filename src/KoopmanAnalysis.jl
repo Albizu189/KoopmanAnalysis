@@ -128,7 +128,7 @@ export
     # Regimes
     RegimeConfig, regime_config, default_save_dir, list_regimes,
     # Config
-    KoopmanConfig, AnalysisResult, hankel_analysis, state_analysis,
+    KoopmanConfig, AnalysisResult, validate!, hankel_analysis, state_analysis,
     predict, spectrum, embed, all_harmonic_branches
 
 function __init__()

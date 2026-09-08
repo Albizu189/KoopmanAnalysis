@@ -12,7 +12,7 @@ using ..Dictionaries: Psi_Hermite, Psi_RBF, Psi_RFF, cluster_data, build_rff_bas
 using ..Spectral: koopman_eigendecomposition, find_all_harmonic_branches
 using ..DataGeneration: delay_space_predictions
 
-export KoopmanConfig, AnalysisResult,
+export KoopmanConfig, AnalysisResult, validate!,
        hankel_analysis, state_analysis, predict, spectrum, embed, all_harmonic_branches,
        select_svd_rank
 
@@ -33,6 +33,8 @@ Base.@kwdef struct KoopmanConfig
     dt::Float64 = 0.1
     return_ψ::Bool = true
     verbose::Bool = true
+    parallel::Bool = true
+    seed::Union{Nothing,Int} = nothing
 end
 
 function Base.show(io::IO, cfg::KoopmanConfig)
@@ -40,6 +42,20 @@ function Base.show(io::IO, cfg::KoopmanConfig)
     print(io, "m=$(cfg.m_embed), τ=$(cfg.tau_delay), ")
     print(io, "r=$(cfg.r), dict=$(cfg.dict_type), ")
     print(io, "method=$(cfg.edmd_method), α=$(cfg.edmd_alpha))")
+end
+
+function validate!(cfg::KoopmanConfig)
+    cfg.m_embed > 0 || throw(ArgumentError("m_embed must be > 0, got $(cfg.m_embed)"))
+    cfg.tau_delay > 0 || throw(ArgumentError("tau_delay must be > 0, got $(cfg.tau_delay)"))
+    cfg.dt > 0 || throw(ArgumentError("dt must be > 0, got $(cfg.dt)"))
+    cfg.edmd_alpha >= 0 || throw(ArgumentError("edmd_alpha must be >= 0, got $(cfg.edmd_alpha)"))
+    cfg.proj_alpha >= 0 || throw(ArgumentError("proj_alpha must be >= 0, got $(cfg.proj_alpha)"))
+    (cfg.r === nothing || cfg.r > 0) || throw(ArgumentError("r must be > 0 or nothing, got $(cfg.r)"))
+    Symbol(lowercase(String(cfg.dict_type))) in (:hermite, :rbf, :rff, :none, :kernel, :havok) ||
+        throw(ArgumentError("dict_type must be one of :hermite, :rbf, :rff, :none, :kernel, :havok, got $(cfg.dict_type)"))
+    cfg.edmd_method in (:pinv, :ridge) ||
+        throw(ArgumentError("edmd_method must be :pinv or :ridge, got $(cfg.edmd_method)"))
+    return cfg
 end
 
 # ---------------------------------------------------------------------------
