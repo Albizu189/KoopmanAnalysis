@@ -52,7 +52,7 @@ end
 # Everything downstream (matmul, indexing, KrylovKit, JLD2 via the parent
 # array) works identically on views.
 mutable struct AnalysisResult
-    K::Matrix{Float64}
+    K::Matrix{<:Number}
     B_full::Union{Matrix{Float64},Nothing}
     B_reduced::Union{Matrix{Float64},Nothing}
     U_r::Union{Matrix{Float64},Nothing}
