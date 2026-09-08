@@ -24,7 +24,7 @@ export euler_maruyama,
 """
     rk4(rhs, x0, dt, m; nLag=1)
 
-Integrate the ODE ``\\dot{x} = rhs(x)`` with a fixed-step explicit Runge–Kutta 4
+Integrate the ODE ``\dot{x} = rhs(x)`` with a fixed-step explicit Runge–Kutta 4
 scheme.
 
 # Arguments
@@ -336,9 +336,8 @@ tuple `p`.
 """
 function epileptor3d_drift(p)
     function f(x)
-        xs = compute_xs(path_parameters(x[3], p.A, p.B, p.R)[1],
-                        path_parameters(x[3], p.A, p.B, p.R)[2])
-        mu2, mu1, nu = path_parameters(x[3], p.A, p.B, p.R)[1:3]
+        mu2, mu1, nu, theta, phi = path_parameters(x[3], p.A, p.B, p.R)
+        xs = compute_xs(mu2, mu1)
 
         dx = -x[2]
         dy = x[1]^3 - mu2 * x[1] - mu1 - x[2] * (nu + x[1] + x[1]^2)
@@ -664,6 +663,8 @@ Return a single representative fixed point for the requested `system`.
 For FHN/Duffing this is the first fixed point found; for Epileptor3D it is the
 silent state computed from the fast subsystem at `z = 0`; for VanderPol it is
 the origin.
+
+Throws an `ArgumentError` if no real fixed points exist for the given parameters.
 """
 function fixed_point(system::String, p)
     if system == "FHN"
@@ -683,6 +684,9 @@ function fixed_point(system::String, p)
     else
         error("fixed_point not implemented for system: $system")
     end
+    isempty(fps) && throw(ArgumentError(
+        "No real fixed points found for system='$system' with the given parameters. " *
+        "Try a different parameter regime."))
     return fps[1]
 end
 
