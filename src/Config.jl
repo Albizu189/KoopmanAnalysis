@@ -308,7 +308,7 @@ function spectrum(res::AnalysisResult; howmany::Int=200, krylovdim::Int=300, tol
     n = size(res.K, 1)
 
     # ── Small matrix: dense is faster and more reliable ──
-    if n < 10000
+    if n < 3001
         λ, Ξ = koopman_eigendecomposition(res.K)
         res.λ = λ
         res.Ξ = Ξ
@@ -316,7 +316,7 @@ function spectrum(res::AnalysisResult; howmany::Int=200, krylovdim::Int=300, tol
     end
 
     # ── Large matrix: iterative Arnoldi via KrylovKit ──
-    @info "Matrix size $n×$n > 2000; using iterative eigsolve (KrylovKit)..."
+    @info "Matrix size $n×$n > 3000; using iterative eigsolve (KrylovKit)..."
 
     # howmany cannot exceed matrix dimension
     howmany = min(howmany, n)
