@@ -1,6 +1,7 @@
 module Utils
 
 using LinearAlgebra
+using LinearAlgebra: BLAS
 using Statistics
 using Printf
 using Random
@@ -12,7 +13,8 @@ export normalize_vector, signed_area, meshgrid_2d, classify_fixed_point_2d,
        mutual_information, find_first_minimum,
        false_nearest_neighbors,
        # --- zero-level-set solvers (added) ---
-       grad_Psi_RBF, grad_phi, find_zls_gradient_descent
+       grad_Psi_RBF, grad_phi, find_zls_gradient_descent,
+       configure_threads!
 
 """
     normalize_vector(x; lb=0.35)
@@ -618,6 +620,17 @@ function find_zls_gradient_descent(S::AbstractMatrix, Psi_func::Function,
     end
     println("    [grad-desc] No points converged to f < tol")
     return Vector{Float64}[]
+end
+
+"""
+    configure_threads!(; blas_threads=1, julia_threads=Threads.nthreads())
+
+Set BLAS thread count and log the current threading configuration.
+Call this before parallel workloads to avoid BLAS/Julia task oversubscription.
+"""
+function configure_threads!(; blas_threads::Int=1, julia_threads::Int=Threads.nthreads())
+    BLAS.set_num_threads(blas_threads)
+    @info "Threading config: BLAS=$blas_threads, Julia tasks=$julia_threads"
 end
 
 end # module

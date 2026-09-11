@@ -40,6 +40,11 @@ end
 # Hermite polynomial dictionary
 # ---------------------------------------------------------------------------
 
+"""
+    get_dim_psi(n, max_deg)
+
+Return the number of multivariate Hermite basis functions of degree ≤ max_deg in n variables.
+"""
 function get_dim_psi(n::Int, max_deg::Int)
     dim = 1
     for d in 1:max_deg
@@ -48,6 +53,11 @@ function get_dim_psi(n::Int, max_deg::Int)
     return dim
 end
 
+"""
+    hermite_basis(n, max_deg)
+
+Build a multivariate Hermite basis for n variables up to degree max_deg.
+"""
 function hermite_basis(n::Int, max_deg::Int; basis_type::Symbol=:probabilist)
     @polyvar pv[1:n]
     BasisType = basis_type == :physicist ? PhysicistsHermite : ProbabilistsHermite
@@ -214,6 +224,11 @@ end
 # task-level threading.
 # ---------------------------------------------------------------------------
 
+"""
+    RFFBasis
+
+Random Fourier Feature basis struct with fields D, W, b.
+"""
 struct RFFBasis
     W::Matrix{Float64}
     b::Vector{Float64}
@@ -221,6 +236,11 @@ struct RFFBasis
     sigma::Float64
 end
 
+"""
+    build_rff_basis(n, D, sigma)
+
+Build a Random Fourier Feature basis for n-dimensional input with D features and bandwidth sigma.
+"""
 function build_rff_basis(n::Int, D::Int, sigma::Real)
     W = randn(D, n) ./ float(sigma)
     b = 2π .* rand(D)
