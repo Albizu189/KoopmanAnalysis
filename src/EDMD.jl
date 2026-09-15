@@ -84,68 +84,36 @@ end
 """
     median_heuristic_sigma(X; n_sample=1000)
 
-Thread-parallel pairwise-distance fill. Each task owns a contiguous stripe of
-the global `dists` array at precomputed offsets — single writer per slot, so
-results are numerically identical to the serial version.
+Median pairwise Euclidean distance over a random subsample of the columns of
+`X`; standard data-driven default bandwidth for Gaussian RBF kernels.
 
-RAM: the `dists` vector (8 · n_pairs bytes ≈ 4 MB for the default 1000-sample
-heuristic) is the same allocation as before; threading adds only tiny per-task
-buffers.
+The computation is a plain serial double loop over at most `n_sample` points
+(≈ 500k pair distances for the default, i.e. a few milliseconds). An earlier
+version hand-threaded this fill with `@spawn`-closure stripes, but that
+pattern reliably crashed/hung the Julia 1.11 compiler (segfault in
+`sroa_pass!`); the threading gain here is not worth that fragility.
 """
 function median_heuristic_sigma(X::AbstractMatrix; n_sample::Int=1000)
     m = size(X, 2)
     idx = randperm(m)[1:min(n_sample, m)]
     n_s = length(idx)
     n_pairs = n_s * (n_s - 1) ÷ 2
-    n_dim = size(X, 1)
-
+    n_pairs == 0 && return 1.0
     dists = Vector{Float64}(undef, n_pairs)
-
-    # Row i contributes (n_s − i) pairs; prefix offsets let every task write
-    # into its own contiguous window of `dists`.
-    offs = Vector{Int}(undef, n_s + 1)
-    acc = 0
-    @inbounds for i in 1:n_s
-        offs[i] = acc
-        acc += n_s - i
-    end
-    offs[n_s + 1] = acc
-    @assert acc == n_pairs
-
-    if n_pairs < 100_000 || nthreads() == 1
-        _pdist_rows!(dists, X, idx, offs, 1:n_s)
-    else
-        tasks = map(_thread_chunks(n_s)) do rng
-            @spawn _pdist_rows!($dists, $X, $idx, $offs, $rng)
-        end
-        foreach(wait, tasks)
-    end
-
-    return median(dists)
-end
-
-# Distances for all pairs whose FIRST index lies in `rows`; written into the
-# global `dists` at precomputed offsets via a running cursor.
-function _pdist_rows!(dists::Vector{Float64}, X::AbstractMatrix,
-                      idx::Vector{Int}, offs::Vector{Int}, rows::UnitRange{Int})
-    n_s = length(idx)
-    n_dim = size(X, 1)
-    xi = Vector{Float64}(undef, n_dim)
-    l = offs[first(rows)]                      # cursor inside this stripe
-    @inbounds for i in rows
-        xi .= @view X[:, idx[i]]
-        for jj in (i + 1):n_s
-            xj = @view X[:, idx[jj]]
+    p = 0
+    @inbounds for a in 1:(n_s - 1)
+        xa = @view X[:, idx[a]]
+        for b in (a + 1):n_s
+            xb = @view X[:, idx[b]]
             s = 0.0
-            for d in 1:n_dim
-                dd = xi[d] - xj[d]
+            for j in eachindex(xa)
+                dd = xa[j] - xb[j]
                 s += dd * dd
             end
-            dists[l] = sqrt(s)
-            l += 1
+            dists[p += 1] = sqrt(s)
         end
     end
-    return nothing
+    return median(dists)
 end
 
 function kernel_feature_vector(x, X_dict::AbstractMatrix, sigma)
