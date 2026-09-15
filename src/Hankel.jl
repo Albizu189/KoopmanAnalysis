@@ -249,7 +249,7 @@ Decomposes the delay-embedded dynamics into a linear model in the leading
 # Steps
 1. SVD of the Hankel matrix (via `eigen(S*S')` — memory-efficient, see above).
 2. If `r === nothing`, the number of modes is chosen automatically from the
-   singular value spectrum with `select_svd_rank(; method=rank_method).
+   singular value spectrum with `select_svd_rank(; method=rank_method)`.
 3. `A` and `B` are obtained by least-squares regression of the time
    derivatives of the POD coordinates (4th-order central differences, step `dt`)
    onto `[v_{1:r-1}; v_r]` (optionally ridge-regularised with `ridge_alpha`).
