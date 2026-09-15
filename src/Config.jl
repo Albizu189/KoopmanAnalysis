@@ -7,10 +7,11 @@ using KrylovKit: eigsolve
 using ..Hankel: build_hankel, hankel_dmd, hankel_edmd, hankel_kernel_edmd, delay_space_edmd_prediction,
             havok_dmd, havok_predict, select_svd_rank
 using ..EDMD: compute_koopman_operator, construct_projection_operator,
-            kernel_edmd_rbf, rbf_kernel, edmd_predict_from_psi
+            kernel_edmd_rbf, rbf_kernel, edmd_predict_from_psi, median_heuristic_sigma
 using ..Dictionaries: Psi_Hermite, Psi_RBF, Psi_RFF, cluster_data, build_rff_basis, construct_projection_operator_hermite
 using ..Spectral: koopman_eigendecomposition, find_all_harmonic_branches
 using ..DataGeneration: delay_space_predictions
+using ..Utils: normalize_states, apply_norm_stats
 
 export KoopmanConfig, AnalysisResult, validate!,
        hankel_analysis, state_analysis, predict, spectrum, embed, all_harmonic_branches,
@@ -210,11 +211,46 @@ function state_analysis(X::AbstractMatrix, Y::AbstractMatrix, cfg::KoopmanConfig
         nRBF = get(cfg.dict_params, :nRBF, 200)
         include_states = get(cfg.dict_params, :include_states, true)
         state_indices = get(cfg.dict_params, :state_indices, nothing)
-        centers = cluster_data(X, nRBF)
-        ΨX = Psi_RBF(X, centers; include_states=include_states, state_indices=state_indices)
-        ΨY = Psi_RBF(Y, centers; include_states=include_states, state_indices=state_indices)
-        B_reduced = construct_projection_operator(n, ΨX, X; alpha=cfg.proj_alpha)
-        dict_info = (type=:rbf, centers=centers, include_states=include_states, state_indices=state_indices)
+        kernel_type = Symbol(lowercase(String(get(cfg.dict_params, :kernel_type, :thinplate))))
+        sigma = get(cfg.dict_params, :sigma, nothing)
+        seed = get(cfg.dict_params, :seed, nothing)
+        max_points = get(cfg.dict_params, :max_points, nothing)
+        normalize = get(cfg.dict_params, :normalize, false)
+
+        # Optional per-coordinate standardization, fit ONCE on X so that X
+        # and Y are lifted in the SAME normalized space.
+        norm_stats = nothing
+        Xw, Yw = X, Y
+        if normalize
+            include_states ||
+                throw(ArgumentError("dict_params.normalize=true requires include_states=true: " *
+                                    "the constant feature row carries the mean offset that maps " *
+                                    "predictions back to original coordinates."))
+            Xw, norm_stats = normalize_states(X)
+            Yw = apply_norm_stats(Y, norm_stats)
+        end
+
+        if kernel_type == :gaussian && (isnothing(sigma) || sigma == :auto)
+            sigma = median_heuristic_sigma(Xw)
+            @info "RBF sigma auto-set to $sigma via median heuristic"
+        end
+
+        centers = cluster_data(Xw, nRBF; max_points=max_points, seed=seed)
+        ΨX = Psi_RBF(Xw, centers; include_states=include_states,
+                     state_indices=state_indices, kernel_type=kernel_type, sigma=sigma)
+        ΨY = Psi_RBF(Yw, centers; include_states=include_states,
+                     state_indices=state_indices, kernel_type=kernel_type, sigma=sigma)
+        B_reduced = construct_projection_operator(n, ΨX, Xw; alpha=cfg.proj_alpha)
+        if normalize
+            # Push the affine correction into B so predictions come back in
+            # ORIGINAL coordinates: x = s .* x̂ + mu, absorbed by the constant
+            # feature row (row 1 of Ψ).
+            B_reduced = diagm(norm_stats.std) * B_reduced
+            B_reduced[:, 1] .+= norm_stats.mean
+        end
+        dict_info = (type=:rbf, centers=centers, include_states=include_states,
+                     state_indices=state_indices, kernel_type=kernel_type,
+                     sigma=sigma, norm_stats=norm_stats)
 
     elseif dict_type == :rff
         D = get(cfg.dict_params, :D, 500)
