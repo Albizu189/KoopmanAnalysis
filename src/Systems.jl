@@ -24,7 +24,7 @@ export euler_maruyama,
 """
     rk4(rhs, x0, dt, m; nLag=1)
 
-Integrate the ODE ``\dot{x} = rhs(x)`` with a fixed-step explicit Runge–Kutta 4
+Integrate the ODE ``\\dot{x} = rhs(x)`` with a fixed-step explicit Runge–Kutta 4
 scheme.
 
 # Arguments
@@ -120,7 +120,7 @@ end
 """
     euler_maruyama(drift, diffusion, x0, dt, m; nLag=1, seed=nothing)
 
-Integrate the SDE  dx = drift(x)dt + diffusion(x)dW  using the Euler-Maruyama
+Integrate the SDE  dx = drift(x)dt + diffusion(x)dW  using the Euler–Maruyama
 scheme with fixed step size `dt`.  `nLag` internal steps are taken between each
 saved snapshot.
 
