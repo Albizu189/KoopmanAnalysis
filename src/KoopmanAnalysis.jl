@@ -86,6 +86,7 @@ export
     finite_difference_jacobian, mutual_information, find_first_minimum,
     false_nearest_neighbors,
     grad_Psi_RBF, grad_phi, find_zls_gradient_descent,
+    normalize_states, apply_norm_stats,
     # Systems
     euler_maruyama, rk4, generate_trajectories, detect_limit_cycle,
     fhn_rhs, fhn_drift, fhn_diffusion, fhn_parameters,
