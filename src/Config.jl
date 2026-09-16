@@ -134,7 +134,8 @@ function hankel_analysis(S::AbstractMatrix, cfg::KoopmanConfig)
             r=cfg.r, dt=cfg.dt,
             sigma=sigma_k, alpha=alpha_kernel,
             use_svd=cfg.use_svd,
-            N_subsample=N_subsample
+            N_subsample=N_subsample,
+            seed=get(cfg.dict_params, :seed, cfg.seed)
         )
 
         # Recompute Gram matrices for storage in ΨX/ΨY slots (optional, for diagnostics)
@@ -172,10 +173,14 @@ function hankel_analysis(S::AbstractMatrix, cfg::KoopmanConfig)
     else
         # ── M2–M5, M7: Explicit dictionary EDMD ──
         cfg.verbose && @info "Running Hankel-EDMD (dict=$(cfg.dict_type), r=$(cfg.r))..."
+        # Fall back to the config-level seed for every stochastic dictionary
+        # step (centre clustering, bandwidth heuristic, RFF draw).
+        dict_params = haskey(cfg.dict_params, :seed) ? cfg.dict_params :
+                      merge(cfg.dict_params, (seed=cfg.seed,))
         if cfg.return_ψ
             K_edmd, B_reduced, B_full, U_r, X_r, dict_info, ΨX, ΨY = hankel_edmd(S;
                 r=cfg.r, dt=cfg.dt,
-                dict_type=cfg.dict_type, dict_params=cfg.dict_params,
+                dict_type=cfg.dict_type, dict_params=dict_params,
                 edmd_method=cfg.edmd_method, edmd_alpha=cfg.edmd_alpha,
                 proj_alpha=cfg.proj_alpha, return_ψ=true, use_svd=cfg.use_svd
             )
@@ -184,7 +189,7 @@ function hankel_analysis(S::AbstractMatrix, cfg::KoopmanConfig)
         else
             K_edmd, B_reduced, B_full, U_r, X_r, dict_info = hankel_edmd(S;
                 r=cfg.r, dt=cfg.dt,
-                dict_type=cfg.dict_type, dict_params=cfg.dict_params,
+                dict_type=cfg.dict_type, dict_params=dict_params,
                 edmd_method=cfg.edmd_method, edmd_alpha=cfg.edmd_alpha,
                 proj_alpha=cfg.proj_alpha, return_ψ=false, use_svd=cfg.use_svd
             )
@@ -213,7 +218,7 @@ function state_analysis(X::AbstractMatrix, Y::AbstractMatrix, cfg::KoopmanConfig
         state_indices = get(cfg.dict_params, :state_indices, nothing)
         kernel_type = Symbol(lowercase(String(get(cfg.dict_params, :kernel_type, :thinplate))))
         sigma = get(cfg.dict_params, :sigma, nothing)
-        seed = get(cfg.dict_params, :seed, nothing)
+        seed = get(cfg.dict_params, :seed, cfg.seed)
         max_points = get(cfg.dict_params, :max_points, nothing)
         normalize = get(cfg.dict_params, :normalize, false)
 
@@ -231,7 +236,7 @@ function state_analysis(X::AbstractMatrix, Y::AbstractMatrix, cfg::KoopmanConfig
         end
 
         if kernel_type == :gaussian && (isnothing(sigma) || sigma == :auto)
-            sigma = median_heuristic_sigma(Xw)
+            sigma = median_heuristic_sigma(Xw; seed=seed)
             @info "RBF sigma auto-set to $sigma via median heuristic"
         end
 
@@ -256,7 +261,8 @@ function state_analysis(X::AbstractMatrix, Y::AbstractMatrix, cfg::KoopmanConfig
         D = get(cfg.dict_params, :D, 500)
         sigma = get(cfg.dict_params, :sigma, 1.0)
         include_states = get(cfg.dict_params, :include_states, false)
-        basis = build_rff_basis(n, D, sigma)
+        basis = build_rff_basis(n, D, sigma;
+                                seed=get(cfg.dict_params, :seed, cfg.seed))
         ΨX = Psi_RFF(X, basis; include_states=include_states)
         ΨY = Psi_RFF(Y, basis; include_states=include_states)
         B_reduced = construct_projection_operator(n, ΨX, X; alpha=cfg.proj_alpha)
