@@ -731,6 +731,7 @@ function generate_test_trajectories(rhs, n_trajectories::Int, dt::Real, top_pred
         x0_test = zeros(2)
         try
             _ = rhs(x0_test)
+            center = zeros(2)
         catch
             error("Could not infer state dimension. Please provide `center`.")
         end

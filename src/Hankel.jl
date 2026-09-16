@@ -306,7 +306,7 @@ function havok_dmd(S::AbstractMatrix; r::Union{Nothing,Int}=nothing, dt::Real=1.
     Vd = zeros(r_lin, n_int)              # their time derivatives
     @inbounds for t in 3:n_snap-2
         for j in 1:r_lin
-            Vd[j, t-2] = (-V_r[j, t+2] + 8*V_r[j, t+1] - 8*V_r[j, t-1] + V_r[j, t-2]) / (12*dt)
+            Vd[j, t-2] = (-V_r[j, t+2] + 8V_r[j, t+1] - 8V_r[j, t-1] + V_r[j, t-2]) / (12*dt)
         end
     end
 
