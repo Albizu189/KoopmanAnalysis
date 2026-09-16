@@ -7,6 +7,7 @@ using ..EDMD: compute_koopman_operator, construct_projection_operator, edmd_pred
                         kernel_edmd_rbf, median_heuristic_sigma
 using ..Dictionaries: Psi_Hermite, Psi_RBF, Psi_RFF, cluster_data, build_rff_basis,
                         construct_projection_operator_hermite, lift_state
+using ..Utils: normalize_states, apply_norm_stats
 
 export build_hankel, hankel_dmd, hankel_edmd, hankel_kernel_edmd, havok_dmd, havok_predict,
     delay_space_edmd_prediction, select_svd_rank,   # ← NEW: select_svd_rank
@@ -503,24 +504,54 @@ function _build_dict_and_project(Vc, X_r, dict_type, dict_params, state_dim, pro
         nRBF = get(dict_params, :nRBF, 200)
         include_states = get(dict_params, :include_states, true)
         state_indices = get(dict_params, :state_indices, nothing)
+        kernel_type = Symbol(lowercase(String(get(dict_params, :kernel_type, :thinplate))))
         sigma = get(dict_params, :sigma, nothing)
-        if isnothing(sigma) || sigma == :auto
-            sigma = median_heuristic_sigma(X_r)
+        seed = get(dict_params, :seed, nothing)
+        max_points = get(dict_params, :max_points, nothing)
+        normalize = get(dict_params, :normalize, false)
+
+        # Optional per-coordinate standardization, fit ONCE on the full
+        # coordinate matrix so the ΨX/ΨY views (column ranges of Ψall) agree.
+        norm_stats = nothing
+        Vw = Vc
+        if normalize
+            include_states ||
+                throw(ArgumentError("dict_params.normalize=true requires include_states=true: " *
+                                    "the constant feature row carries the mean offset that maps " *
+                                    "predictions back to original coordinates."))
+            Vw, norm_stats = normalize_states(Vc)
+        end
+
+        if kernel_type == :gaussian && (isnothing(sigma) || sigma == :auto)
+            sigma = median_heuristic_sigma(Vw)
             @info "RBF sigma auto-set to $sigma via median heuristic"
         end
+
         # accept pre-computed centres, else run k-means
         centers = get(dict_params, :centers, nothing)
         if isnothing(centers)
-            centers = cluster_data(X_r, nRBF)
+            centers = cluster_data(Vw[:, 1:n_snap-1], nRBF;
+                                   max_points=max_points, seed=seed)
         else
             @info "Using user-supplied RBF centres ($(size(centers,2)) points)"
         end
-        Ψall = Psi_RBF(Vc, centers;
-                       include_states=include_states, state_indices=state_indices)
+        Ψall = Psi_RBF(Vw, centers;
+                       include_states=include_states, state_indices=state_indices,
+                       kernel_type=kernel_type, sigma=sigma)
         ΨX = view(Ψall, :, 1:n_snap-1)
-        B_reduced = construct_projection_operator(state_dim, ΨX, X_r; alpha=proj_alpha)
+        B_reduced = construct_projection_operator(state_dim, ΨX, Vw[:, 1:n_snap-1];
+                                                  alpha=proj_alpha)
+        if normalize
+            # Push the affine correction into B so predictions come back in
+            # ORIGINAL coordinates: x = s .* x̂ + mu, with mu absorbed by the
+            # constant feature row (row 1 of Ψ). B_full = U_r * B_reduced in
+            # hankel_edmd then inherits the correction automatically.
+            B_reduced = diagm(norm_stats.std) * B_reduced
+            B_reduced[:, 1] .+= norm_stats.mean
+        end
         dict_info = (type=:rbf, centers=centers,
-                     include_states=include_states, state_indices=state_indices)
+                     include_states=include_states, state_indices=state_indices,
+                     kernel_type=kernel_type, sigma=sigma, norm_stats=norm_stats)
 
     elseif dict_type == :rff
         D = get(dict_params, :D, 500)

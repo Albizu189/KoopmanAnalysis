@@ -440,6 +440,128 @@ end
 end
 
 # ============================================================================
+# Gaussian RBF dictionary + normalization + seeding (added)
+# ============================================================================
+
+@testset "Gaussian RBF dictionary" begin
+    Random.seed!(SEED)
+    X = randn(2, 30) .* [3.0, 0.5] .+ [1.0, -2.0]
+    centers = randn(2, 4)
+
+    # --- exact values + boundedness ---
+    Ψg = Psi_RBF(X, centers; kernel_type=:gaussian, sigma=1.5, include_states=false)
+    @test size(Ψg) == (4, 30)
+    @test all(0.0 .< Ψg .<= 1.0)
+    s = sum((X[:, 1] .- centers[:, 1]) .^ 2)
+    @test Ψg[1, 1] ≈ exp(-s / (2 * 1.5^2))
+
+    # --- auto sigma via median heuristic (:auto === nothing) ---
+    Ψa = Psi_RBF(X, centers; kernel_type=:gaussian, include_states=false)
+    @test all(0.0 .< Ψa .<= 1.0)
+    Ψauto = Psi_RBF(X, centers; kernel_type=:gaussian, sigma=:auto, include_states=false)
+    @test Ψauto ≈ Ψa
+
+    # --- thin-plate regression: default kernel unchanged ---
+    Ψt = Psi_RBF(X, centers; include_states=false)
+    r = sqrt(s) + 1e-12
+    @test Ψt[1, 1] ≈ r * r * log(r)
+
+    # --- augmentation rows are kernel-independent ---
+    Ψg_full = Psi_RBF(X, centers; kernel_type=:gaussian, sigma=1.5, include_states=true)
+    @test Ψg_full[1, :] ≈ ones(30)
+    @test Ψg_full[2:3, :] ≈ X
+    @test size(Ψg_full, 1) == 4 + 1 + 2
+
+    # --- argument validation ---
+    @test_throws ArgumentError Psi_RBF(X, centers; kernel_type=:multiquadric)
+    @test_throws ArgumentError Psi_RBF(X, centers; kernel_type=:gaussian, sigma=-1.0)
+
+    # --- threaded path (m >= 1024): spot-check against manual formula ---
+    Xl = randn(2, 1500)
+    cl = randn(2, 8)
+    Ψl = Psi_RBF(Xl, cl; kernel_type=:gaussian, sigma=2.0, include_states=false)
+    for (i, k) in [(1, 1), (500, 3), (1500, 8)]
+        s2 = sum((Xl[:, i] .- cl[:, k]) .^ 2)
+        @test Ψl[k, i] ≈ exp(-s2 / (2 * 2.0^2))
+    end
+end
+
+@testset "cluster_data seed reproducibility" begin
+    X = randn(2, 60)
+    c1 = cluster_data(X, 4; seed=42)
+    c2 = cluster_data(X, 4; seed=42)
+    c3 = cluster_data(X, 4; seed=7)
+    @test c1 ≈ c2
+    @test size(c1) == (2, 4)
+    @test all(isfinite, c3)
+end
+
+@testset "normalize_states / apply_norm_stats" begin
+    X = 5.0 .* randn(2, 200) .+ [3.0, -7.0]
+    Xn, stats = normalize_states(X)
+    @test vec(mean(Xn, dims=2)) ≈ [0.0, 0.0] atol=1e-12
+    @test vec(std(Xn, dims=2)) ≈ [1.0, 1.0] atol=1e-12
+    @test apply_norm_stats(X, stats) ≈ Xn
+    @test X ≈ Xn .* stats.std .+ stats.mean   # invertible, input untouched
+
+    # constant coordinate maps to zero without NaN/Inf
+    Xc = vcat(ones(1, 50), randn(1, 50))
+    Xcn, statsc = normalize_states(Xc)
+    @test all(Xcn[1, :] .== 0.0)
+    @test all(isfinite, Xcn)
+    @test statsc.std[1] == 1.0
+end
+
+@testset "Gaussian RBF + normalize pipelines" begin
+    Random.seed!(SEED)
+    Xtr, Ytr, cfg, rhs, X_fixed = edmd_training_data("FHN", "stable-node";
+        m_train=15, n_trajectories=2, dt=0.01, window=0.5)
+
+    # --- state-space pipeline ---
+    acfg = KoopmanConfig(
+        dict_type=:rbf,
+        dict_params=(nRBF=10, kernel_type=:gaussian, sigma=:auto,
+                     normalize=true, seed=SEED),
+        edmd_method=:ridge, edmd_alpha=1e-3,
+        return_ψ=true, verbose=false)
+    res = state_analysis(Xtr, Ytr, acfg)
+    @test res isa AnalysisResult
+    @test size(res.K, 1) == size(res.K, 2)
+    @test !isnothing(res.dict_info.norm_stats)
+    @test res.dict_info.kernel_type == :gaussian
+    @test res.dict_info.sigma > 0
+
+    # lift_state must re-normalize original-coordinate states consistently
+    j = 1
+    ψ_lift = lift_state(Xtr[:, j], res.dict_info)
+    xn = apply_norm_stats(reshape(Xtr[:, j], :, 1), res.dict_info.norm_stats)
+    ψ_manual = Psi_RBF(xn, res.dict_info.centers;
+                       include_states=res.dict_info.include_states,
+                       kernel_type=:gaussian, sigma=res.dict_info.sigma)[:, 1]
+    @test ψ_lift ≈ ψ_manual
+
+    # B must map back to ORIGINAL coordinates: reconstruct a training state
+    x_hat = res.B_full * res.ΨX[:, j]
+    @test x_hat ≈ Xtr[:, j] atol=0.1
+
+    # --- hankel pipeline ---
+    v = sin.(0:0.1:20)
+    hcfg = KoopmanConfig(
+        m_embed=5, tau_delay=1, r=3,
+        dict_type=:rbf,
+        dict_params=(nRBF=8, kernel_type=:gaussian, normalize=true, seed=SEED),
+        edmd_method=:ridge, edmd_alpha=1e-3,
+        dt=0.1, return_ψ=true, verbose=false)
+    res2 = hankel_analysis(v, hcfg)
+    @test !isnothing(res2.dict_info.norm_stats)
+    @test res2.dict_info.kernel_type == :gaussian
+    Xt, Xp = predict(res2, [1, 3], 2)
+    @test size(Xt) == (1, 3, 2)
+    @test size(Xp) == (1, 3, 2)
+    @test all(isfinite, Xp)
+end
+
+# ============================================================================
 # EDMD
 # ============================================================================
 @testset "EDMD" begin

@@ -14,7 +14,9 @@ export normalize_vector, signed_area, meshgrid_2d, classify_fixed_point_2d,
        false_nearest_neighbors,
        # --- zero-level-set solvers (added) ---
        grad_Psi_RBF, grad_phi, find_zls_gradient_descent,
-       configure_threads!
+       configure_threads!,
+       # --- state standardization for dictionaries (added) ---
+       normalize_states, apply_norm_stats
 
 """
     normalize_vector(x; lb=0.35)
@@ -631,6 +633,43 @@ Call this before parallel workloads to avoid BLAS/Julia task oversubscription.
 function configure_threads!(; blas_threads::Int=1, julia_threads::Int=Threads.nthreads())
     BLAS.set_num_threads(blas_threads)
     @info "Threading config: BLAS=$blas_threads, Julia tasks=$julia_threads"
+end
+
+# ---------------------------------------------------------------------------
+# State standardization for dictionary lifting (added)
+# ---------------------------------------------------------------------------
+
+"""
+    normalize_states(X::AbstractMatrix)
+
+Standardize each row (state coordinate) of `X` to zero mean and unit
+variance. Returns `(Xn, stats)` where `Xn` is the standardized matrix and
+`stats = (mean=mu, std=s)` holds the per-coordinate vectors.
+
+Coordinates with (near-)zero variance are divided by 1.0 instead, so they
+map to the constant 0 — this keeps the transform well-defined for
+degenerate coordinates (e.g. an equilibrium held exactly constant).
+
+Use [`apply_norm_stats`](@ref) to transform NEW data (next-state matrices,
+test trajectories, grid points) with the SAME statistics. This is essential
+in EDMD, where ΨX and ΨY must live in the same normalized space.
+"""
+function normalize_states(X::AbstractMatrix)
+    mu = vec(mean(X, dims=2))
+    s = vec(std(X, dims=2))
+    s = [si < eps(Float64) ? 1.0 : si for si in s]
+    Xn = (X .- mu) ./ s
+    return Xn, (mean=mu, std=s)
+end
+
+"""
+    apply_norm_stats(X::AbstractMatrix, stats)
+
+Standardize `X` using previously computed `stats = (mean, std)` from
+[`normalize_states`](@ref). Returns a new matrix; the input is not modified.
+"""
+function apply_norm_stats(X::AbstractMatrix, stats)
+    return (X .- stats.mean) ./ stats.std
 end
 
 end # module

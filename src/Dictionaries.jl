@@ -2,11 +2,13 @@ module Dictionaries
 
 using LinearAlgebra
 using Random
+using Statistics: median
 using Clustering: kmeans
 using DynamicPolynomials: @polyvar
 using MultivariateBases: maxdegree_basis, FullBasis, ProbabilistsHermite, PhysicistsHermite
 using MultivariatePolynomials: polynomial
 using Base.Threads: @spawn, nthreads
+using ..Utils: apply_norm_stats
 
 export get_dim_psi, hermite_basis, Psi_Hermite,
        cluster_data, Psi_RBF,
@@ -125,37 +127,85 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    cluster_data(X, nRBF; max_points=nothing)
+    cluster_data(X, nRBF; max_points=nothing, seed=nothing)
 
-Optional column subsampling before k-means. Centroid placement is statistically
+K-means clustering of the columns of `X` into `nRBF` centres used as RBF
+centres. Returns an `n × nRBF` matrix of centroids.
+
+Optional column subsampling before k-means: centroid placement is statistically
 robust to strong subsampling, while k-means cost scales linearly with the
 number of samples and Clustering.jl is single-threaded. Pass e.g.
 `max_points=50_000` on very long series to cut clustering time ≈ m/50_000×
-with negligible effect on the centres. Default behaviour is unchanged.
+with negligible effect on the centres.
+
+`seed` fixes the random number generator before clustering, making centre
+placement reproducible across runs (k-means uses random initialization).
 """
 function cluster_data(X::AbstractMatrix, nRBF::Int;
-                      max_points::Union{Nothing,Int}=nothing)
+                      max_points::Union{Nothing,Int}=nothing,
+                      seed::Union{Nothing,Int}=nothing)
     m = size(X, 2)
     if !isnothing(max_points) && max_points < m
         X = X[:, randperm(m)[1:max_points]]
+    end
+    if !isnothing(seed)
+        Random.seed!(seed)
     end
     R = kmeans(X, nRBF; maxiter=2000)
     return R.centers
 end
 
 """
-    Psi_RBF(X, centers; include_states=true, state_indices=nothing)
+    Psi_RBF(X, centers; include_states=true, state_indices=nothing,
+            kernel_type=:thinplate, sigma=nothing)
 
-Thread-parallel over columns. Tasks own disjoint COLUMN blocks of `Ψ`
-(rows `offset+1 : offset+nRBF` across their block), so every output element
-has exactly one writer and no atomics/locks are involved.
+Radial basis function dictionary, thread-parallel over columns. Tasks own
+disjoint COLUMN blocks of `Ψ` (rows `offset+1 : offset+nRBF` across their
+block), so every output element has exactly one writer and no atomics/locks
+are involved.
+
+# Kernels
+- `:thinplate` (default): ``ψ(r) = r² \\log(r)`` — the classic Duchon
+  thin-plate spline. Unbounded growth; best for normalized data.
+- `:gaussian`: ``ψ(r) = exp(-r² / 2σ²)`` — bounded in `(0, 1]` and C^∞;
+  robust for multi-scale / bursting dynamics (e.g. Epileptor).
+
+# Gaussian bandwidth `sigma`
+- Explicit positive value: used directly.
+- `nothing` (default): estimated from `X` via the median pairwise-distance
+  heuristic (`_auto_sigma`), mirroring `EDMD.median_heuristic_sigma`.
+- When lifting SEVERAL matrices that must share one bandwidth (EDMD: ΨX and
+  ΨY), compute σ once — e.g. `sigma = _auto_sigma(X_train)` — and pass it
+  explicitly so all lifts agree.
+
+# Normalization
+This function does NOT normalize internally. Standardize states beforehand
+with `normalize_states` / `apply_norm_stats` (Utils) when the data is
+multi-scale; the EDMD pipelines (`hankel_edmd`, `state_analysis`) do this
+automatically when `dict_params.normalize=true`.
 
 RAM cost: each task allocates its own `dists` buffer for its block only, so
 the combined scratch space across ALL threads equals the single `m`-vector the
 serial version used (8·m bytes). Nothing else is duplicated.
 """
 function Psi_RBF(X::AbstractMatrix, centers::AbstractMatrix;
-                 include_states::Bool=true, state_indices::Union{Nothing,Vector{Int}}=nothing)
+                 include_states::Bool=true, state_indices::Union{Nothing,Vector{Int}}=nothing,
+                 kernel_type::Symbol=:thinplate,
+                 sigma::Union{Nothing,Real,Symbol}=nothing)
+    kernel_type in (:thinplate, :gaussian) ||
+        throw(ArgumentError("Unknown RBF kernel_type: $kernel_type. Use :thinplate or :gaussian."))
+    if kernel_type == :gaussian
+        if isa(sigma, Symbol)
+            sigma == :auto ||
+                throw(ArgumentError("Unknown sigma symbol: $sigma. Use :auto or a positive real value."))
+            sigma = _auto_sigma(X)
+        elseif isnothing(sigma)
+            sigma = _auto_sigma(X)
+        end
+        sigma = float(sigma)
+        sigma > 0 || throw(ArgumentError("sigma must be positive, got $sigma"))
+    end
+
     n, m = size(X)
     nRBF = size(centers, 2)
     local offset::Int
@@ -175,24 +225,32 @@ function Psi_RBF(X::AbstractMatrix, centers::AbstractMatrix;
     end
 
     if m < 1024 || nthreads() == 1
-        return _psi_rbf_cols!(Ψ, X, centers, offset, 1:m)
+        return _psi_rbf_cols!(Ψ, X, centers, offset, 1:m;
+                              kernel_type=kernel_type, sigma=sigma)
     end
     tasks = map(_thread_chunks(m)) do rng
-        @spawn _psi_rbf_cols!($Ψ, $X, $centers, $offset, $rng)
+        @spawn _psi_rbf_cols!($Ψ, $X, $centers, $offset, $rng;
+                              kernel_type=$kernel_type, sigma=$sigma)
     end
     foreach(wait, tasks)
     return Ψ
 end
 
-# Column-block worker: fills the thin-plate rows for columns `cols`.
-# Numerically identical to the original serial triple loop (same accumulation
-# order, same +1e-12 regularizer, same r²·log(r) evaluation).
+# Column-block worker: fills the RBF rows for columns `cols`.
+# Thin-plate: numerically identical to the original serial triple loop (same
+# accumulation order, same +1e-12 regularizer, same r²·log(r) evaluation).
+# Gaussian: uses the SQUARED distance directly, exp(-s/(2σ²)) — no sqrt in
+# the hot loop, value 1.0 at the centre.
 function _psi_rbf_cols!(Ψ::AbstractMatrix, X::AbstractMatrix, centers::AbstractMatrix,
-                        offset::Int, cols::UnitRange{Int})
+                        offset::Int, cols::UnitRange{Int};
+                        kernel_type::Symbol=:thinplate,
+                        sigma::Union{Nothing,Real}=nothing)
     n = size(X, 1)
     nRBF = size(centers, 2)
     len = length(cols)
     dists = Vector{Float64}(undef, len)
+    gaussian = kernel_type == :gaussian
+    two_sigma2 = gaussian ? 2.0 * float(sigma)^2 : 0.0
     @inbounds for k in 1:nRBF
         c = @view centers[:, k]
         li = 0
@@ -203,16 +261,48 @@ function _psi_rbf_cols!(Ψ::AbstractMatrix, X::AbstractMatrix, centers::Abstract
                 d = X[j, i] - c[j]
                 s += d * d
             end
-            dists[li] = sqrt(s) + 1e-12
+            dists[li] = s          # squared distance
         end
         li = 0
         for i in cols
             li += 1
-            r = dists[li]
-            Ψ[offset + k, i] = r * r * log(r)
+            s = dists[li]
+            if gaussian
+                Ψ[offset + k, i] = exp(-s / two_sigma2)
+            else
+                r = sqrt(s) + 1e-12
+                Ψ[offset + k, i] = r * r * log(r)
+            end
         end
     end
     return Ψ
+end
+
+# Median pairwise Euclidean distance over a random subsample; data-driven
+# default bandwidth for the Gaussian RBF dictionary. Mirrors
+# EDMD.median_heuristic_sigma, but duplicated here on purpose: this module is
+# included BEFORE EDMD.jl, so that function cannot be referenced.
+function _auto_sigma(X::AbstractMatrix; n_sample::Int=1000)
+    m = size(X, 2)
+    idx = randperm(m)[1:min(n_sample, m)]
+    n_s = length(idx)
+    n_pairs = n_s * (n_s - 1) ÷ 2
+    n_pairs == 0 && return 1.0
+    dists = Vector{Float64}(undef, n_pairs)
+    p = 0
+    @inbounds for a in 1:(n_s - 1)
+        xa = @view X[:, idx[a]]
+        for b in (a + 1):n_s
+            xb = @view X[:, idx[b]]
+            s = 0.0
+            for j in eachindex(xa)
+                dd = xa[j] - xb[j]
+                s += dd * dd
+            end
+            dists[p += 1] = sqrt(s)
+        end
+    end
+    return median(dists)
 end
 
 # ---------------------------------------------------------------------------
@@ -294,9 +384,17 @@ function lift_state(x::AbstractVector, dict_info::NamedTuple)
     if dict_info.type == :hermite
         return Psi_Hermite(X, dict_info.max_deg; basis_type=dict_info.basis_type)[:, 1]
     elseif dict_info.type == :rbf
+        # Pipeline dictionaries may carry standardization stats; new states
+        # arrive in ORIGINAL coordinates and must be normalized before lifting.
+        norm_stats = get(dict_info, :norm_stats, nothing)
+        if !isnothing(norm_stats)
+            X = apply_norm_stats(X, norm_stats)
+        end
         return Psi_RBF(X, dict_info.centers;
                        include_states=dict_info.include_states,
-                       state_indices=dict_info.state_indices)[:, 1]
+                       state_indices=dict_info.state_indices,
+                       kernel_type=get(dict_info, :kernel_type, :thinplate),
+                       sigma=get(dict_info, :sigma, nothing))[:, 1]
     elseif dict_info.type == :rff
         return Psi_RFF(X, dict_info.basis)[:, 1]
     else
@@ -368,9 +466,17 @@ function _psi_dispatch(X::AbstractMatrix, dict_info::NamedTuple)
     if dict_info.type == :hermite
         return Psi_Hermite(X, dict_info.max_deg; basis_type=dict_info.basis_type)
     elseif dict_info.type == :rbf
+        # Grid points arrive in ORIGINAL coordinates; standardize first when
+        # the dictionary was built on normalized states.
+        norm_stats = get(dict_info, :norm_stats, nothing)
+        if !isnothing(norm_stats)
+            X = apply_norm_stats(X, norm_stats)
+        end
         return Psi_RBF(X, dict_info.centers;
                        include_states=dict_info.include_states,
-                       state_indices=get(dict_info, :state_indices, nothing))
+                       state_indices=get(dict_info, :state_indices, nothing),
+                       kernel_type=get(dict_info, :kernel_type, :thinplate),
+                       sigma=get(dict_info, :sigma, nothing))
     elseif dict_info.type == :rff
         return Psi_RFF(X, dict_info.basis;
                        include_states=get(dict_info, :include_states, false))
