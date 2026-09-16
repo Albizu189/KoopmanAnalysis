@@ -61,15 +61,20 @@ function rk4(rhs, x0, dt, m; nLag=1)
 end
 
 """
-    generate_trajectories(rhs, n_trajectories, dt, m; nLag=1, center=zeros(n), scale=1.0)
+    generate_trajectories(rhs, n_trajectories, dt, m; nLag=1, center=zeros(n), scale=1.0, seed=nothing)
 
 Generate `n_trajectories` initial conditions around `center` with the given
 `scale` and integrate each one with `rk4`.
 
 `center` may be supplied as a vector or an `n×1` matrix.  `scale` is either a
 scalar or a vector of length `n`.
+
+`seed` optionally fixes the random generator before the initial conditions are
+drawn, making the generated set reproducible across runs.
 """
-function generate_trajectories(rhs, n_trajectories, dt, m; nLag=1, center=zeros(0), scale=1.0)
+function generate_trajectories(rhs, n_trajectories, dt, m; nLag=1, center=zeros(0), scale=1.0,
+                               seed::Union{Nothing,Int}=nothing)
+    isnothing(seed) || Random.seed!(seed)
     # Use a single short trajectory to infer dimension if center is empty.
     if isempty(center)
         x0_test = randn(2)
@@ -718,13 +723,14 @@ Generate `n_trajectories` test trajectories of length `top_pred_step + 1`.
 function generate_test_trajectories(rhs, n_trajectories::Int, dt::Real, top_pred_step::Int;
                                     nLag::Int=1,
                                     center::Union{Nothing,AbstractVector}=nothing,
-                                    window::Real=1.0)
+                                    window::Real=1.0,
+                                    seed::Union{Nothing,Int}=nothing)
+    isnothing(seed) || Random.seed!(seed)
     # Infer dimension
     if isnothing(center)
         x0_test = zeros(2)
         try
             _ = rhs(x0_test)
-            center = zeros(2)
         catch
             error("Could not infer state dimension. Please provide `center`.")
         end
