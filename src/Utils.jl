@@ -407,6 +407,8 @@ search (Armijo condition).
 - `lr`       : base learning rate (default 0.1).
 - `tol`      : gradient-norm convergence threshold (default 1e-8).
 - `verbose`  : print iteration log for start #1 only (default true).
+- `seed`     : optional random seed for the start-point sampling; identical
+  seeds give identical start sets and identical results (default nothing).
 
 # Returns
 - `Vector{Vector{Float64}}` of de-duplicated converged points (radius 0.05).
@@ -420,7 +422,8 @@ function find_zls_gradient_descent(S::AbstractMatrix, Psi_func::Function,
                                     Ξ::AbstractMatrix, j_modes, dict_info::NamedTuple;
                                     n_starts::Int=500, n_iter::Int=200,
                                     lr::Float64=0.1, tol::Float64=1e-8,
-                                    verbose::Bool=true)
+                                    verbose::Bool=true,
+                                    seed::Union{Nothing,Int}=nothing)
     # ---- Normalize j_modes to a vector ---------------------------------
     if j_modes isa Integer
         j_modes = [Int(j_modes)]
@@ -428,6 +431,8 @@ function find_zls_gradient_descent(S::AbstractMatrix, Psi_func::Function,
         j_modes = collect(Int, j_modes)
     end
     n_modes = length(j_modes)
+
+    isnothing(seed) || Random.seed!(seed)
 
     n_dim, n_snap = size(S)
     ξs = [Ξ[:, j] for j in j_modes]   # read-only column views (one per mode)

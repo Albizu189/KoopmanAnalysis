@@ -177,6 +177,8 @@ are involved.
 - When lifting SEVERAL matrices that must share one bandwidth (EDMD: ΨX and
   ΨY), compute σ once — e.g. `sigma = _auto_sigma(X_train)` — and pass it
   explicitly so all lifts agree.
+- `seed` fixes the subsample used by the automatic bandwidth heuristic
+  (`sigma = nothing`/`:auto`), making σ (and the whole pipeline) reproducible.
 
 # Normalization
 This function does NOT normalize internally. Standardize states beforehand
@@ -191,16 +193,17 @@ serial version used (8·m bytes). Nothing else is duplicated.
 function Psi_RBF(X::AbstractMatrix, centers::AbstractMatrix;
                  include_states::Bool=true, state_indices::Union{Nothing,Vector{Int}}=nothing,
                  kernel_type::Symbol=:thinplate,
-                 sigma::Union{Nothing,Real,Symbol}=nothing)
+                 sigma::Union{Nothing,Real,Symbol}=nothing,
+                 seed::Union{Nothing,Int}=nothing)
     kernel_type in (:thinplate, :gaussian) ||
         throw(ArgumentError("Unknown RBF kernel_type: $kernel_type. Use :thinplate or :gaussian."))
     if kernel_type == :gaussian
         if isa(sigma, Symbol)
             sigma == :auto ||
                 throw(ArgumentError("Unknown sigma symbol: $sigma. Use :auto or a positive real value."))
-            sigma = _auto_sigma(X)
+            sigma = _auto_sigma(X; seed=seed)
         elseif isnothing(sigma)
-            sigma = _auto_sigma(X)
+            sigma = _auto_sigma(X; seed=seed)
         end
         sigma = float(sigma)
         sigma > 0 || throw(ArgumentError("sigma must be positive, got $sigma"))
@@ -282,7 +285,9 @@ end
 # default bandwidth for the Gaussian RBF dictionary. Mirrors
 # EDMD.median_heuristic_sigma, but duplicated here on purpose: this module is
 # included BEFORE EDMD.jl, so that function cannot be referenced.
-function _auto_sigma(X::AbstractMatrix; n_sample::Int=1000)
+function _auto_sigma(X::AbstractMatrix; n_sample::Int=1000,
+                     seed::Union{Nothing,Int}=nothing)
+    isnothing(seed) || Random.seed!(seed)
     m = size(X, 2)
     idx = randperm(m)[1:min(n_sample, m)]
     n_s = length(idx)
@@ -327,11 +332,15 @@ struct RFFBasis
 end
 
 """
-    build_rff_basis(n, D, sigma)
+    build_rff_basis(n, D, sigma; seed=nothing)
 
 Build a Random Fourier Feature basis for n-dimensional input with D features and bandwidth sigma.
+
+`seed` optionally fixes the random generator before the frequencies are drawn,
+making the basis reproducible across runs.
 """
-function build_rff_basis(n::Int, D::Int, sigma::Real)
+function build_rff_basis(n::Int, D::Int, sigma::Real; seed::Union{Nothing,Int}=nothing)
+    isnothing(seed) || Random.seed!(seed)
     W = randn(D, n) ./ float(sigma)
     b = 2π .* rand(D)
     return RFFBasis(W, b, D, float(sigma))

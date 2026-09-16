@@ -562,6 +562,88 @@ end
 end
 
 # ============================================================================
+# Seed reproducibility (added)
+# ============================================================================
+
+@testset "Seed reproducibility" begin
+    # --- gradient-descent start selection ---
+    S_z = randn(2, 40)
+    centers_z = randn(2, 3)
+    Psi_z(X) = Psi_RBF(X, centers_z; include_states=true)
+    Ξ_z = randn(6, 4)
+    dict_z = (centers=centers_z, include_states=true, state_indices=[1, 2])
+    z1 = find_zls_gradient_descent(S_z, Psi_z, Ξ_z, 1, dict_z;
+                                   n_starts=8, n_iter=10, verbose=false, seed=42)
+    z2 = find_zls_gradient_descent(S_z, Psi_z, Ξ_z, 1, dict_z;
+                                   n_starts=8, n_iter=10, verbose=false, seed=42)
+    @test length(z1) == length(z2)
+    @test all(z1[k] ≈ z2[k] for k in eachindex(z1))
+
+    # --- Random Fourier Features ---
+    b1 = build_rff_basis(2, 20, 1.0; seed=7)
+    b2 = build_rff_basis(2, 20, 1.0; seed=7)
+    b3 = build_rff_basis(2, 20, 1.0; seed=8)
+    @test b1.W ≈ b2.W
+    @test b1.b ≈ b2.b
+    @test !(b1.W ≈ b3.W)
+
+    # --- median heuristic / automatic sigma ---
+    X_s = randn(2, 60)
+    @test median_heuristic_sigma(X_s; n_sample=30, seed=5) ==
+          median_heuristic_sigma(X_s; n_sample=30, seed=5)
+    c_s = randn(2, 4)
+    Ψsa = Psi_RBF(X_s, c_s; kernel_type=:gaussian, sigma=:auto, include_states=false, seed=9)
+    Ψsb = Psi_RBF(X_s, c_s; kernel_type=:gaussian, sigma=:auto, include_states=false, seed=9)
+    @test Ψsa ≈ Ψsb
+
+    # --- trajectory generators ---
+    p_s = fhn_parameters("stable-node")
+    rhs_s = fhn_rhs(p_s)
+    t1 = generate_trajectories(rhs_s, 2, 0.01, 5; center=[0.0, 0.0], scale=0.5, seed=11)
+    t2 = generate_trajectories(rhs_s, 2, 0.01, 5; center=[0.0, 0.0], scale=0.5, seed=11)
+    @test all(t1[k] ≈ t2[k] for k in eachindex(t1))
+    Xt1, Xi1 = generate_test_trajectories(rhs_s, 2, 0.01, 5;
+                                          center=[0.0, 0.0], window=0.5, seed=13)
+    Xt2, Xi2 = generate_test_trajectories(rhs_s, 2, 0.01, 5;
+                                          center=[0.0, 0.0], window=0.5, seed=13)
+    @test Xt1 ≈ Xt2
+    @test Xi1 ≈ Xi2
+
+    # --- data builders ---
+    Xd1, Yd1 = edmd_training_data("FHN", "stable-node"; m_train=10, n_trajectories=2,
+                                  dt=0.01, window=0.5, seed=SEED)[1:2]
+    Xd2, Yd2 = edmd_training_data("FHN", "stable-node"; m_train=10, n_trajectories=2,
+                                  dt=0.01, window=0.5, seed=SEED)[1:2]
+    @test Xd1 ≈ Xd2
+    @test Yd1 ≈ Yd2
+    vh1, Sh1 = hankel_training_data("FHN", "stable-node"; m_embed=5, tau_delay=1,
+                                    m_train=30, dt=0.01, window=0.5, seed=SEED)[1:2]
+    vh2, Sh2 = hankel_training_data("FHN", "stable-node"; m_embed=5, tau_delay=1,
+                                    m_train=30, dt=0.01, window=0.5, seed=SEED)[1:2]
+    @test vh1 ≈ vh2
+    @test Sh1 ≈ Sh2
+
+    # --- kernel-EDMD subsampling ---
+    v_k = sin.(0:0.1:20)
+    S_k = build_hankel(v_k, 5, 1)
+    k1 = hankel_kernel_edmd(S_k; r=3, sigma=1.0, alpha=1e-6, N_subsample=20, seed=17)
+    k2 = hankel_kernel_edmd(S_k; r=3, sigma=1.0, alpha=1e-6, N_subsample=20, seed=17)
+    @test k1[3] ≈ k2[3]   # subsampled X
+    @test k1[4] ≈ k2[4]   # subsampled Y
+    @test k1[1] ≈ k2[1]   # Koopman operator
+
+    # --- KoopmanConfig.seed wiring (state-space pipeline) ---
+    scfg = KoopmanConfig(
+        dict_type=:rbf,
+        dict_params=(nRBF=6, kernel_type=:gaussian, sigma=:auto, normalize=true),
+        edmd_method=:ridge, edmd_alpha=1e-3,
+        return_ψ=false, verbose=false, seed=SEED)
+    r1 = state_analysis(Xd1, Yd1, scfg)
+    r2 = state_analysis(Xd1, Yd1, scfg)
+    @test r1.K ≈ r2.K
+end
+
+# ============================================================================
 # EDMD
 # ============================================================================
 @testset "EDMD" begin

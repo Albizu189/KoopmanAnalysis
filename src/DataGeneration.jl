@@ -1,6 +1,7 @@
 module DataGeneration
 
 using LinearAlgebra
+using Random
 
 using ..Regimes: regime_config
 using ..Systems: fixed_point, rk4, 
@@ -22,7 +23,9 @@ function edmd_training_data(system::String, regime::String;
                             dt::Real=0.01,
                             nLag::Int=1,
                             center::Union{Nothing,AbstractVector}=nothing,
-                            save_dir::Union{Nothing,String}=nothing)
+                            save_dir::Union{Nothing,String}=nothing,
+                            seed::Union{Nothing,Int}=nothing)
+    isnothing(seed) || Random.seed!(seed)
     cfg = regime_config(system, regime; save_dir=save_dir)
     params = cfg.params
     rhs = if system == "FHN"
@@ -68,6 +71,9 @@ end
 
 Build training data for Hankel-EDMD.  Returns `(v_train, S, cfg, rhs)` where
 `S` is the full Hankel matrix ready for `hankel_dmd` or `hankel_edmd`.
+
+`seed` optionally fixes the random generator before the initial condition is
+drawn, making the training series reproducible across runs.
 """
 function hankel_training_data(system::String, regime::String;
                               m_embed::Int=10,
@@ -78,7 +84,9 @@ function hankel_training_data(system::String, regime::String;
                               nLag::Int=1,
                               observed_state::Int=1,
                               center::Union{Nothing,AbstractVector}=nothing,
-                              save_dir::Union{Nothing,String}=nothing)
+                              save_dir::Union{Nothing,String}=nothing,
+                              seed::Union{Nothing,Int}=nothing)
+    isnothing(seed) || Random.seed!(seed)
     cfg = regime_config(system, regime; save_dir=save_dir)
     params = cfg.params
     rhs = if system == "FHN"

@@ -93,7 +93,9 @@ version hand-threaded this fill with `@spawn`-closure stripes, but that
 pattern reliably crashed/hung the Julia 1.11 compiler (segfault in
 `sroa_pass!`); the threading gain here is not worth that fragility.
 """
-function median_heuristic_sigma(X::AbstractMatrix; n_sample::Int=1000)
+function median_heuristic_sigma(X::AbstractMatrix; n_sample::Int=1000,
+                                seed::Union{Nothing,Int}=nothing)
+    isnothing(seed) || Random.seed!(seed)
     m = size(X, 2)
     idx = randperm(m)[1:min(n_sample, m)]
     n_s = length(idx)

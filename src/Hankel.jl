@@ -157,8 +157,10 @@ function hankel_kernel_edmd(S::AbstractMatrix;
     sigma::Real=1.0,
     alpha::Real=1e-6,
     use_svd::Bool=true,
-    N_subsample::Union{Nothing,Int}=nothing
+    N_subsample::Union{Nothing,Int}=nothing,
+    seed::Union{Nothing,Int}=nothing
 )
+    isnothing(seed) || Random.seed!(seed)
     if use_svd
         F = svd(S, full=false)
         r_actual = isnothing(r) ? length(F.S) : min(r, length(F.S))
@@ -523,7 +525,7 @@ function _build_dict_and_project(Vc, X_r, dict_type, dict_params, state_dim, pro
         end
 
         if kernel_type == :gaussian && (isnothing(sigma) || sigma == :auto)
-            sigma = median_heuristic_sigma(Vw)
+            sigma = median_heuristic_sigma(Vw; seed=seed)
             @info "RBF sigma auto-set to $sigma via median heuristic"
         end
 
@@ -557,7 +559,8 @@ function _build_dict_and_project(Vc, X_r, dict_type, dict_params, state_dim, pro
         D = get(dict_params, :D, 500)
         sigma = get(dict_params, :sigma, 1.0)
         include_states = get(dict_params, :include_states, false)
-        basis = build_rff_basis(state_dim, D, sigma)
+        basis = build_rff_basis(state_dim, D, sigma;
+                                seed=get(dict_params, :seed, nothing))
         Ψall = Psi_RFF(Vc, basis; include_states=include_states)
         ΨX = view(Ψall, :, 1:n_snap-1)
         B_reduced = construct_projection_operator(state_dim, ΨX, X_r; alpha=proj_alpha)
