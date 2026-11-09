@@ -1,0 +1,9 @@
+# LocalPaths.jl — local filesystem configuration for the KoopmanAnalysis
+# usage-case scripts.  Copy this file to `LocalPaths.jl` (git-ignored) and
+# edit, or set the environment variables below.  Never commit personal paths.
+module LocalPaths
+    "Root for heavy disk-backed datasets (JLD2). Override with ENV[\"KOOPMAN_DATA_ROOT\"]."
+    const DATA_ROOT    = get(ENV, "KOOPMAN_DATA_ROOT",    "/data/sofia/full_pipeline")
+    "Root for figures and light-weight outputs. Override with ENV[\"KOOPMAN_RESULTS_ROOT\"]."
+    const RESULTS_ROOT = get(ENV, "KOOPMAN_RESULTS_ROOT", "/home/sofia/Documents/julia_projects/KoopmanAnalysis/results")
+end
