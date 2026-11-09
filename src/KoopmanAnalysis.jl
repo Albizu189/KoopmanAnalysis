@@ -111,6 +111,7 @@ export
     build_hankel, hankel_dmd, hankel_edmd, hankel_kernel_edmd,
     delay_space_edmd_prediction, havok_dmd, havok_predict,
     select_svd_rank, build_hankel_multichannel, delay_embed_training_data,
+    delay_embed_pairs, pair_views, dmd_pairs, edmd_pairs, havok_pairs,
     # DataGeneration
     edmd_training_data, hankel_training_data, state_space_predictions,
     delay_space_predictions, state_space_predict_from_psi,
@@ -130,6 +131,7 @@ export
     RegimeConfig, regime_config, default_save_dir, list_regimes,
     # Config
     KoopmanConfig, AnalysisResult, validate!, hankel_analysis, state_analysis,
+    pair_analysis,
     predict, spectrum, embed, all_harmonic_branches
 
 function __init__()

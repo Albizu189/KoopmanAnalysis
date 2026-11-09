@@ -10,11 +10,12 @@ using ..Dictionaries: Psi_Hermite, Psi_RBF, Psi_RFF, cluster_data, build_rff_bas
 using ..Utils: normalize_states, apply_norm_stats
 
 export build_hankel, hankel_dmd, hankel_edmd, hankel_kernel_edmd, havok_dmd, havok_predict,
-    delay_space_edmd_prediction, select_svd_rank,   # ← NEW: select_svd_rank
-    build_hankel_multichannel, delay_embed_training_data
+        delay_space_edmd_prediction, select_svd_rank,
+        build_hankel_multichannel, delay_embed_training_data,
+        delay_embed_pairs, pair_views, dmd_pairs, edmd_pairs, havok_pairs
 
 # =============================================================================
-# build_hankel and hankel_dmd
+# Build_hankel and hankel_dmd
 # =============================================================================
 
 function build_hankel(v_series::AbstractVector, m_embed::Int, tau_delay::Int)
@@ -125,7 +126,7 @@ function hankel_edmd(S::AbstractMatrix;
 
     # ── Dictionary lift, computed ONCE (see docstring) ──
     Ψall, B_reduced, dict_info = _build_dict_and_project(
-        Vc, X_r, dict_type, dict_params, r_actual, proj_alpha
+        Vc, 1:n_snap-1, dict_type, dict_params, r_actual, proj_alpha
     )
     ΨX = view(Ψall, :, 1:n_snap-1)
     ΨY = view(Ψall, :, 2:n_snap)
@@ -488,11 +489,27 @@ end
 # =============================================================================
 
 # Lift the full coordinate matrix ONCE and return it as Ψall; the caller
-# derives ΨX = Ψall[:, 1:end-1] and ΨY = Ψall[:, 2:end] as views.
-# Vc: full coordinate matrix (r × n_snap); X_r: its first n_snap-1 columns
-# (a view), used for centre clustering and the projection operator.
-function _build_dict_and_project(Vc, X_r, dict_type, dict_params, state_dim, proj_alpha)
+# derives its ΨX/ΨY as views:  hankel_edmd uses the contiguous shift
+# x_cols = 1:n_snap-1,  edmd_pairs passes the multi-trajectory index pd.x.
+#
+# Vc:      full coordinate matrix (r × n_cols).  The X-side columns are
+#          Vc[:, x_cols] — used for centre clustering and the projection
+#          operator.  The Y side is never needed here: the dictionary acts
+#          columnwise, so ψ of any Y column is already a column of Ψall.
+# x_cols:  column indices of Vc forming the X side of the snapshot pairs.
+#          Any index set is accepted — a contiguous UnitRange (legacy
+#          Hankel path) or an arbitrary Vector{Int} (multi-trajectory path).
+#
+# Returns (Ψall, B_reduced, dict_info) with the SAME contract as before the
+# pair refactor: Ψall = ψ(Vc) over ALL columns (the caller takes its own
+# column views of it); B_reduced maps Ψ-space back to the `state_dim`
+# Vc-coordinates, fit on the X columns only.
+function _build_dict_and_project(Vc, x_cols::AbstractVector{Int},
+                                 dict_type, dict_params, state_dim, proj_alpha)
     n_snap = size(Vc, 2)
+    (isempty(x_cols) || minimum(x_cols) < 1 || maximum(x_cols) > n_snap) &&
+        error("_build_dict_and_project: x_cols must be non-empty column " *
+              "indices in 1:$n_snap (got $(length(x_cols)) indices).")
 
     if dict_type == :hermite
         max_deg = get(dict_params, :max_deg, 2)
@@ -513,7 +530,7 @@ function _build_dict_and_project(Vc, X_r, dict_type, dict_params, state_dim, pro
         normalize = get(dict_params, :normalize, false)
 
         # Optional per-coordinate standardization, fit ONCE on the full
-        # coordinate matrix so the ΨX/ΨY views (column ranges of Ψall) agree.
+        # coordinate matrix so the ΨX/ΨY views (column subsets of Ψall) agree.
         norm_stats = nothing
         Vw = Vc
         if normalize
@@ -529,10 +546,11 @@ function _build_dict_and_project(Vc, X_r, dict_type, dict_params, state_dim, pro
             @info "RBF sigma auto-set to $sigma via median heuristic"
         end
 
-        # accept pre-computed centres, else run k-means
+        # accept pre-computed centres, else run k-means on the X columns only
+        # (x_cols) — same convention as the old contiguous shift 1:n_snap-1.
         centers = get(dict_params, :centers, nothing)
         if isnothing(centers)
-            centers = cluster_data(Vw[:, 1:n_snap-1], nRBF;
+            centers = cluster_data(Vw[:, x_cols], nRBF;
                                    max_points=max_points, seed=seed)
         else
             @info "Using user-supplied RBF centres ($(size(centers,2)) points)"
@@ -540,8 +558,15 @@ function _build_dict_and_project(Vc, X_r, dict_type, dict_params, state_dim, pro
         Ψall = Psi_RBF(Vw, centers;
                        include_states=include_states, state_indices=state_indices,
                        kernel_type=kernel_type, sigma=sigma)
-        ΨX = view(Ψall, :, 1:n_snap-1)
-        B_reduced = construct_projection_operator(state_dim, ΨX, Vw[:, 1:n_snap-1];
+
+        # X side of the lifted data for the projection operator.
+        # Contiguous x_cols (hankel_edmd's 1:n_snap-1) → strided view: zero
+        # copy AND BLAS-compatible, exactly the old behaviour.  Arbitrary
+        # index vectors (edmd_pairs' pd.x) are NOT strided, so materialise a
+        # contiguous copy — otherwise the products inside
+        # construct_projection_operator fall back to the slow generic matmul.
+        ΨX = x_cols isa AbstractRange ? view(Ψall, :, x_cols) : Ψall[:, x_cols]
+        B_reduced = construct_projection_operator(state_dim, ΨX, Vw[:, x_cols];
                                                   alpha=proj_alpha)
         if normalize
             # Push the affine correction into B so predictions come back in
@@ -562,8 +587,15 @@ function _build_dict_and_project(Vc, X_r, dict_type, dict_params, state_dim, pro
         basis = build_rff_basis(state_dim, D, sigma;
                                 seed=get(dict_params, :seed, nothing))
         Ψall = Psi_RFF(Vc, basis; include_states=include_states)
-        ΨX = view(Ψall, :, 1:n_snap-1)
-        B_reduced = construct_projection_operator(state_dim, ΨX, X_r; alpha=proj_alpha)
+
+        # Same strided-view / contiguous-copy rule as the :rbf branch.
+        # For the contiguous shift, X_side is literally the old X_r view
+        # (zero copy); for an arbitrary index vector it is one BLAS-friendly
+        # copy of the X-side coordinates.
+        ΨX     = x_cols isa AbstractRange ? view(Ψall, :, x_cols) : Ψall[:, x_cols]
+        X_side = x_cols isa AbstractRange ? view(Vc,    :, x_cols) : Vc[:,    x_cols]
+        B_reduced = construct_projection_operator(state_dim, ΨX, X_side;
+                                                  alpha=proj_alpha)
         dict_info = (type=:rff, basis=basis, include_states=include_states)
 
     else
@@ -571,6 +603,325 @@ function _build_dict_and_project(Vc, X_r, dict_type, dict_params, state_dim, pro
     end
 
     return Ψall, B_reduced, dict_info
+end
+
+# --- legacy signature (kept so pre-refactor calls keep working) ---------------
+# The old API took the X-side DATA matrix as second argument
+# (X_r = view(Vc, :, 1:n_snap-1), as built by hankel_edmd).  For that call
+# pattern this forwarder is numerically identical to the old implementation —
+# it simply routes to the index-based method with the contiguous shift, so
+# hankel_edmd works unchanged even BEFORE you apply the (2d) call-site edit.
+function _build_dict_and_project(Vc, X_r::AbstractMatrix, dict_type, dict_params,
+                                 state_dim, proj_alpha)
+    n_snap = size(Vc, 2)
+    size(X_r) == (size(Vc, 1), n_snap - 1) ||
+        error("legacy _build_dict_and_project(Vc, X_r, …) requires " *
+              "X_r == Vc[:, 1:n_snap-1]; got size(X_r) = $(size(X_r)) for Vc " *
+              "with $n_snap columns — pass the X column indices instead.")
+    return _build_dict_and_project(Vc, 1:n_snap-1, dict_type, dict_params,
+                                   state_dim, proj_alpha)
+end
+
+# =============================================================================
+# MULTI-TRAJECTORY PAIR FITTING (X/Y paradigm)
+# =============================================================================
+
+"""
+    delay_embed_pairs(X_train, Y_train, m_embed, tau_delay; n_trajectories=1)
+        -> (S = S_all, x = x_idx, y = y_idx, cols = traj_cols,
+            n_pairs = ..., m_traj = ...)
+
+Multi-trajectory delay embedding, memory-shaped for the pair fitters
+(`dmd_pairs`, `edmd_pairs`, `havok_pairs`, `Config.pair_analysis`).
+
+`X_train`/`Y_train` are the raw state-space pairs produced by
+`edmd_training_data` (n × (m_traj·n_trajectories), trajectory-major).  Each
+trajectory is reconstructed from its consecutive pairs, delay-embedded with
+`build_hankel_multichannel`, and the PER-TRAJECTORY Hankel matrices are
+concatenated into ONE snapshot matrix
+
+    S_all = [S_1 S_2 … S_P]        (n·m_embed) × ((n_pairs+1)·P)
+
+so trajectory boundaries never contaminate a delay vector.  The training
+PAIRS are INDEX VIEWS of S_all:
+
+    X = view(S_all, :, x_idx),   Y = view(S_all, :, y_idx),
+    Y[:, k] = one-snapshot successor of X[:, k] INSIDE the same trajectory.
+
+Compared with `delay_embed_training_data` (which materialises X_delay and
+Y_delay as two separate copies) this stores the delay data ONCE, and lets the
+downstream fitters lift/project the shared parent a single time — the same
+memory contract that `hankel_edmd` guarantees through its Ψall views.
+
+`cols[j]` is the column range of trajectory j in S_all (needed by
+`havok_pairs`); with `m_embed = 1, tau_delay = 1` the result is the plain
+state-space concatenation, so the same machinery also serves the
+no-embedding reference methods (DMD / EDMD on the raw shown state).
+"""
+function delay_embed_pairs(X_train::AbstractMatrix, Y_train::AbstractMatrix,
+                           m_embed::Int, tau_delay::Int;
+                           n_trajectories::Int=1)
+    n, total_cols = size(X_train)
+    size(Y_train) == (n, total_cols) ||
+        error("delay_embed_pairs: X_train and Y_train must have the same shape")
+    m_traj = div(total_cols, n_trajectories)
+    m_traj * n_trajectories == total_cols ||
+        error("delay_embed_pairs: total columns ($total_cols) not divisible " *
+              "by n_trajectories ($n_trajectories)")
+
+    max_lag = (m_embed - 1) * tau_delay
+    T_full  = m_traj + 1                     # reconstructed trajectory length
+    T_full > max_lag + 1 ||
+        error("delay_embed_pairs: trajectory length $T_full too short for " *
+              "m_embed=$m_embed, tau_delay=$tau_delay")
+
+    n_delay = n * m_embed
+    n_pairs = T_full - max_lag - 1           # pairs per trajectory
+
+    S_all = zeros(n_delay, (n_pairs + 1) * n_trajectories)
+    x_idx = Vector{Int}(undef, n_pairs * n_trajectories)
+    y_idx = Vector{Int}(undef, n_pairs * n_trajectories)
+    cols  = Vector{UnitRange{Int}}(undef, n_trajectories)
+
+    X_traj = zeros(n, T_full)                # reusable scratch
+    @inbounds for i in 1:n_trajectories
+        src = (i - 1) * m_traj + 1
+        # Reconstruct trajectory i from its consecutive pairs (same
+        # convention as delay_embed_training_data): first column from X,
+        # the remaining m_traj columns from Y.
+        X_traj[:, 1]     .= @view X_train[:, src]
+        X_traj[:, 2:end] .= @view Y_train[:, src:(src + m_traj - 1)]
+        # Per-trajectory Hankel block — boundaries never enter a delay vector
+        H = build_hankel_multichannel(X_traj, m_embed, tau_delay)
+        dst = (i - 1) * (n_pairs + 1)
+        cols[i] = (dst + 1):(dst + n_pairs + 1)
+        S_all[:, cols[i]] .= H
+        out = (i - 1) * n_pairs
+        x_idx[out+1:out+n_pairs] .= (dst + 1):(dst + n_pairs)       # S_i[:, 1:end-1]
+        y_idx[out+1:out+n_pairs] .= (dst + 2):(dst + n_pairs + 1)   # S_i[:, 2:end]
+    end
+
+    return (S = S_all, x = x_idx, y = y_idx, cols = cols,
+            n_pairs = n_pairs, m_traj = m_traj)
+end
+
+"""Convenience views of a `delay_embed_pairs` dataset: `(X, Y) = pair_views(pd)`."""
+pair_views(pd::NamedTuple) = view(pd.S, :, pd.x), view(pd.S, :, pd.y)
+
+# ---------------------------------------------------------------------------
+
+"""
+    dmd_pairs(pd; r=nothing, use_svd=true)
+
+Linear DMD on the multi-trajectory pair views of `pd` (see
+`delay_embed_pairs`).  Mirrors `hankel_dmd` — same return contract
+`(K, K_tilde, X_r, B_proj, U_r)` — but the snapshot pairs never cross a
+trajectory boundary.
+
+* `use_svd=false`: full operator `K = Y·pinv(X)`, `U_r = I` — the honest
+  rank-n operator on the raw pairs (`use_svd` is HONOURED here, unlike
+  `hankel_dmd`, which always SVDs).
+* `use_svd=true, r=nothing`: POD basis from `G = S_all·S_all'` (BLAS syrk +
+  `eigen`, never materialising the n_state × n_cols `Vt` factor of `svd`), all
+  `n_state` modes kept, `K = U_r·(Y_r·pinv(X_r))·U_r'` — mathematically equal
+  to `Y·pinv(X)` (exact-rotation invariant) but numerically better
+  conditioned, and it keeps the POD modes `U_r` for diagnostics.
+* `use_svd=true, r=R`: same with the leading `R` POD modes only
+  (rank-truncated DMD, e.g. `r = r_havok`).
+
+In the single-trajectory limit this reproduces `hankel_dmd(S; r)` exactly
+(sign/rotation freedom of the POD basis cancels in `U_r·K_tilde·U_r'`).
+"""
+function dmd_pairs(pd::NamedTuple; r::Union{Nothing,Int}=nothing, use_svd::Bool=true)
+    n_state = size(pd.S, 1)
+    X = view(pd.S, :, pd.x)
+    Y = view(pd.S, :, pd.y)
+
+    if !use_svd
+        K = Y * pinv(X)
+        Id = Matrix{Float64}(I, n_state, n_state)
+        return K, K, X, Id, Id
+    end
+
+    # POD basis of the data — same memory-safe route as havok_dmd
+    G = pd.S * pd.S'
+    E = eigen(Symmetric(G))
+    p = sortperm(E.values; rev=true)
+    σ = sqrt.(max.(E.values[p], 0.0))
+    r_actual = isnothing(r) ? length(σ) : min(r, length(σ))
+
+    U_r = E.vectors[:, p][:, 1:r_actual]
+    X_r = U_r' * X                          # POD coordinates of the X side
+    Y_r = U_r' * Y
+    K_tilde = Y_r * pinv(X_r)
+    K = U_r * K_tilde * U_r'
+    return K, K_tilde, X_r, U_r', U_r
+end
+
+# ---------------------------------------------------------------------------
+
+"""
+    edmd_pairs(pd; r, dict_type, dict_params, edmd_method, edmd_alpha,
+               proj_alpha, return_ψ, use_svd)
+
+Pair version of `hankel_edmd` with the SAME memory contract: the dictionary
+is evaluated ONCE on the shared coordinate matrix, and `ΨX`/`ΨY` are
+returned as INDEX VIEWS of that single parent (`ΨX = Ψall[:, pd.x]`,
+`ΨY = Ψall[:, pd.y]`), so downstream offload logic that deduplicates shared
+storage keeps working.
+
+Coordinates: `Vc = S_all` when `use_svd=false` (no copy); otherwise the POD
+coordinates `Vc = U_r'·S_all` with `U_r` from `eigen(Symmetric(S_all·S_all'))`
+(leading `r` modes; `r === nothing` keeps all).  RBF centres are clustered on
+the X columns `Vc[:, pd.x]` only, and live in Vc coordinates — exactly the
+convention of `hankel_edmd` (map back with `U_r` when `use_svd=true`).
+
+Returns the `hankel_edmd` contract
+`(K_edmd, B_reduced, B_full, U_r, X_r, dict_info, ΨX, ΨY)` with
+`return_ψ=true`, otherwise without the last two.
+"""
+function edmd_pairs(pd::NamedTuple;
+    r::Union{Nothing,Int}=nothing,
+    dt::Real=1.0,
+    dict_type::Symbol=:hermite,
+    dict_params::NamedTuple=NamedTuple(),
+    edmd_method::Symbol=:ridge,
+    edmd_alpha::Real=1e-3,
+    proj_alpha::Real=1e-6,
+    return_ψ::Bool=false,
+    use_svd::Bool=true
+)
+    dict_type = Symbol(lowercase(String(dict_type)))
+    S_all = pd.S
+    n_state = size(S_all, 1)
+
+    # ── Reduced coordinates ──
+    if use_svd
+        G = S_all * S_all'
+        E = eigen(Symmetric(G))
+        p = sortperm(E.values; rev=true)
+        σ = sqrt.(max.(E.values[p], 0.0))
+        r_actual = isnothing(r) ? length(σ) : min(r, length(σ))
+        U_r = E.vectors[:, p][:, 1:r_actual]
+        Vc = U_r' * S_all                    # r × (n_pairs + P)   (copy)
+    else
+        r_actual = n_state
+        U_r = Matrix{Float64}(I, n_state, n_state)
+        Vc = S_all                           # no copy
+    end
+    X_r = view(Vc, :, pd.x)                  # X columns of the shared parent
+
+    # ── Dictionary lift, computed ONCE on the shared parent (see docstring) ──
+    Ψall, B_reduced, dict_info = _build_dict_and_project(
+        Vc, pd.x, dict_type, dict_params, r_actual, proj_alpha
+    )
+    ΨX = view(Ψall, :, pd.x)
+    ΨY = view(Ψall, :, pd.y)
+
+    if dict_type == :hermite && r_actual > 100
+        nPsi = size(Ψall, 1)
+        @warn "Hermite dictionary with r=$r_actual produces nPsi=$nPsi observables. " *
+              "Consider reducing `r` or `max_deg`."
+    end
+
+    K_edmd = compute_koopman_operator(ΨX, ΨY; method=edmd_method, alpha=edmd_alpha)
+    B_full = use_svd ? U_r * B_reduced : B_reduced
+
+    if return_ψ
+        return K_edmd, B_reduced, B_full, U_r, X_r, dict_info, ΨX, ΨY
+    else
+        return K_edmd, B_reduced, B_full, U_r, X_r, dict_info
+    end
+end
+
+# ---------------------------------------------------------------------------
+
+"""
+    havok_pairs(pd; r=nothing, dt=1.0, rank_method=:energy, energy=0.999,
+                ridge_alpha=0.0)
+
+Multi-trajectory HAVOK.  Identical pipeline to `havok_dmd` — POD of the
+delay-embedded data, automatic rank selection, least-squares fit of the
+continuous-time forced system `d/dt v = A v + B u` — except that:
+
+* the POD basis and singular values come from the concatenated
+  per-trajectory matrix `S_all` (`pd.S`);
+* the POD coordinates `V_r = U_r'·S_all` are BLOCK-structured (one block per
+  trajectory, `pd.cols`), and the 4th-order central-difference derivatives
+  are taken INSIDE each block only — the stencil (t±1, t±2) never crosses a
+  trajectory boundary.
+
+Returns the `havok_dmd` contract `(K, A, B, U_r, V_r, u)`; `u` is the
+concatenated forcing signal over all blocks.  `K` is the diagnostics-only
+discrete flow map `exp([A B; 0 0]·dt)` — predictions should integrate `(A, B)`
+with RK4, as in `havok_predict`.
+"""
+function havok_pairs(pd::NamedTuple; r::Union{Nothing,Int}=nothing, dt::Real=1.0,
+                     rank_method::Symbol=:energy, energy::Real=0.999,
+                     ridge_alpha::Real=0.0)
+    S_all = pd.S
+    n_state, n_cols = size(S_all)
+
+    # ── 1. POD of the concatenated data (memory-safe: eigen(S·S'), no Vt) ──
+    G = S_all * S_all'
+    E = eigen(Symmetric(G))
+    p = sortperm(E.values; rev=true)
+    σ = sqrt.(max.(E.values[p], 0.0))
+    U_all = E.vectors[:, p]
+
+    # ── 2. Number of modes to keep (same machinery as havok_dmd) ──
+    r_actual = if isnothing(r)
+        select_svd_rank(σ; method=rank_method, energy=energy,
+                        aspect=n_state / n_cols)
+    else
+        min(r, length(σ))
+    end
+    r_actual = min(r_actual, n_cols)
+    r_actual < 2 && error("HAVOK requires r ≥ 2 (need at least one linear " *
+                          "coordinate + forcing).")
+    @info "HAVOK (pairs): keeping r = $r_actual POD modes (selection = $rank_method)"
+
+    U_r = U_all[:, 1:r_actual]
+    V_r = U_r' * S_all                       # r × n_cols, block-structured
+
+    # ── 3. Regression for dv/dt = A v + B v_input, per trajectory block ──
+    #   dv/dt|_t ≈ (−v[t+2] + 8v[t+1] − 8v[t−1] + v[t−2]) / (12 dt)
+    # evaluated only at interior columns t of each block (t±1, t±2 in-block).
+    r_lin  = r_actual - 1
+    blocks = pd.cols
+    n_int  = sum(max(length(b) - 4, 0) for b in blocks)
+    n_int > 0 || error("havok_pairs: trajectories too short for the 5-point " *
+                       "stencil (need ≥ 5 columns per block)")
+
+    Z  = Matrix{Float64}(undef, r_actual, n_int)   # [v_{1:r-1}; u] at t
+    Vd = Matrix{Float64}(undef, r_lin, n_int)      # dv/dt at t
+    out = 0
+    @inbounds for b in blocks
+        t0, t1 = first(b), last(b)
+        for t in (t0 + 2):(t1 - 2)
+            out += 1
+            for j in 1:r_lin
+                Vd[j, out] = (-V_r[j, t+2] + 8V_r[j, t+1] - 8V_r[j, t-1] + V_r[j, t-2]) / (12dt)
+                Z[j, out]  = V_r[j, t]
+            end
+            Z[r_actual, out] = V_r[r_actual, t]
+        end
+    end
+
+    AB = if ridge_alpha > 0
+        (Vd * Z') / (Z * Z' + float(ridge_alpha) * I(r_actual))
+    else
+        Vd * pinv(Z)                        # least squares, as in the paper
+    end
+    A = AB[:, 1:r_lin]
+    B = AB[:, r_actual:r_actual]
+
+    # Discrete flow map of the augmented autonomous system — diagnostics only
+    𝒜 = zeros(r_actual, r_actual)
+    𝒜[1:r_lin, :] .= AB
+    K = Matrix(exp(𝒜 * dt))
+
+    return K, A, B, U_r, V_r, vec(V_r[r_actual, :])
 end
 
 end # module

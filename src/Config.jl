@@ -3,9 +3,11 @@ module Config
 using LinearAlgebra
 using Statistics
 using KrylovKit: eigsolve
+using Random
 
 using ..Hankel: build_hankel, hankel_dmd, hankel_edmd, hankel_kernel_edmd, delay_space_edmd_prediction,
-            havok_dmd, havok_predict, select_svd_rank
+            havok_dmd, havok_predict, select_svd_rank,
+            dmd_pairs, edmd_pairs, havok_pairs, pair_views
 using ..EDMD: compute_koopman_operator, construct_projection_operator,
             kernel_edmd_rbf, rbf_kernel, edmd_predict_from_psi, median_heuristic_sigma
 using ..Dictionaries: Psi_Hermite, Psi_RBF, Psi_RFF, cluster_data, build_rff_basis, construct_projection_operator_hermite
@@ -14,8 +16,9 @@ using ..DataGeneration: delay_space_predictions
 using ..Utils: normalize_states, apply_norm_stats
 
 export KoopmanConfig, AnalysisResult, validate!,
-       hankel_analysis, state_analysis, predict, spectrum, embed, all_harmonic_branches,
-       select_svd_rank
+        hankel_analysis, state_analysis, pair_analysis,
+        predict, spectrum, embed, all_harmonic_branches,
+        select_svd_rank
 
 # ---------------------------------------------------------------------------
 # 1. Configuration struct
@@ -195,6 +198,114 @@ function hankel_analysis(S::AbstractMatrix, cfg::KoopmanConfig)
             )
             return AnalysisResult(K_edmd, B_full, B_reduced, U_r, X_r,
                                   dict_info, nothing, nothing, S, cfg)
+        end
+    end
+end
+
+"""
+    pair_analysis(pd, cfg) -> AnalysisResult
+
+Multi-trajectory counterpart of `hankel_analysis`: fits the method described
+by `cfg` on the X/Y pair views of `pd` (see `Hankel.delay_embed_pairs`)
+instead of a single-trajectory Hankel matrix.  Dispatch mirrors
+`hankel_analysis`:
+
+* `:none`                     → `dmd_pairs`  (linear DMD; honours `use_svd`/`r`)
+* `:kernel`                   → `kernel_edmd_rbf` on the (optionally
+                                POD-projected) pair views
+* `:havok`                    → `havok_pairs` (block-structured central
+                                differences — derivatives never cross a
+                                trajectory boundary)
+* `:rbf`, `:hermite`, `:rff`  → `edmd_pairs` (lift-once, ΨX/ΨY index views)
+
+The returned `AnalysisResult` follows the same field conventions as
+`hankel_analysis` — in particular `res.S` stores the shared parent `pd.S`,
+`ΨX`/`ΨY` are views of one lifted parent, and `X_r` is a view of the
+coordinate matrix — so `spectrum`, the prediction engines and disk-offload
+logic work unchanged.  In the single-trajectory limit
+`pair_analysis(pd, cfg)` reproduces `hankel_analysis(pd.S, cfg)`.
+"""
+function pair_analysis(pd::NamedTuple, cfg::KoopmanConfig)
+    if cfg.dict_type == :none
+        # ── M1: Linear DMD on the multi-trajectory pairs ──
+        cfg.verbose && @info "Running linear DMD on multi-trajectory pairs " *
+                             "(r=$(cfg.r), use_svd=$(cfg.use_svd))..."
+        K, K_tilde, X_r, B_proj, U_r = dmd_pairs(pd; r=cfg.r, use_svd=cfg.use_svd)
+        return AnalysisResult(
+            K, U_r, Matrix(B_proj),
+            Matrix{Float64}(I(size(K, 1))), X_r, (type=:linear,),
+            nothing, nothing, pd.S, cfg
+        )
+
+    elseif cfg.dict_type == :kernel
+        # ── M6: Kernel-EDMD on the (optionally POD-projected) pair views ──
+        cfg.verbose && @info "Running kernel-EDMD on multi-trajectory pairs (r=$(cfg.r))..."
+        sigma_k      = float(get(cfg.dict_params, :sigma, 1.0))
+        alpha_kernel = float(get(cfg.dict_params, :alpha, 1e-6))
+        N_subsample  = get(cfg.dict_params, :N_subsample, nothing)
+        kseed        = get(cfg.dict_params, :seed, cfg.seed)
+        isnothing(kseed) || Random.seed!(kseed)
+
+        X, Y = pair_views(pd)
+        U_r  = nothing
+        if cfg.use_svd
+            G = pd.S * pd.S'
+            E = eigen(Symmetric(G))
+            p = sortperm(E.values; rev=true)
+            σ = sqrt.(max.(E.values[p], 0.0))
+            r_actual = isnothing(cfg.r) ? length(σ) : min(cfg.r, length(σ))
+            U_r = E.vectors[:, p][:, 1:r_actual]
+            X, Y = U_r' * X, U_r' * Y
+        end
+        if !isnothing(N_subsample) && N_subsample < size(X, 2)
+            idx = randperm(size(X, 2))[1:N_subsample]
+            X, Y = X[:, idx], Y[:, idx]
+        end
+        K, B, K_ZZ, K_ZY = kernel_edmd_rbf(X, Y, sigma_k; alpha=alpha_kernel)
+        dict_info = (type=:kernel, X_dict=X, sigma=sigma_k, alpha=alpha_kernel)
+        return AnalysisResult(K, B, B, U_r, X, dict_info, K_ZZ, K_ZY, pd.S, cfg)
+
+    elseif cfg.dict_type == :havok
+        # ── M8: HAVOK with per-trajectory central differences ──
+        cfg.verbose && @info "Running HAVOK on multi-trajectory pairs (r=$(cfg.r))..."
+        rank_method = get(cfg.dict_params, :rank_method, :energy)
+        energy      = get(cfg.dict_params, :energy, 0.999)
+        ridge_alpha = get(cfg.dict_params, :ridge_alpha, 0.0)
+
+        K, A, B, U_r, V_r, u = havok_pairs(pd; r=cfg.r, dt=cfg.dt,
+            rank_method=rank_method, energy=energy, ridge_alpha=ridge_alpha)
+        dict_info = (type=:havok, A=A, B=B, forcing=u, r_lin=size(A, 1))
+        return AnalysisResult(
+            K, U_r, nothing,
+            U_r, V_r, dict_info,
+            nothing, nothing, pd.S, cfg
+        )
+
+    else
+        # ── M2–M5, M7: Explicit dictionary EDMD on the pair views ──
+        cfg.verbose && @info "Running pair-EDMD (dict=$(cfg.dict_type), r=$(cfg.r))..."
+        # Fall back to the config-level seed for every stochastic dictionary
+        # step (centre clustering, bandwidth heuristic, RFF draw).
+        dict_params = haskey(cfg.dict_params, :seed) ? cfg.dict_params :
+                      merge(cfg.dict_params, (seed=cfg.seed,))
+        if cfg.return_ψ
+            K_edmd, B_reduced, B_full, U_r, X_r, dict_info, ΨX, ΨY = edmd_pairs(pd;
+                r=cfg.r, dt=cfg.dt,
+                dict_type=cfg.dict_type, dict_params=dict_params,
+                edmd_method=cfg.edmd_method, edmd_alpha=cfg.edmd_alpha,
+                proj_alpha=cfg.proj_alpha, return_ψ=true, use_svd=cfg.use_svd
+            )
+            return AnalysisResult(K_edmd, B_full, B_reduced, U_r, X_r,
+                                  dict_info, ΨX, ΨY, pd.S, cfg)
+        else
+            K_edmd, B_reduced, B_full, U_r, X_r, dict_info = edmd_pairs(pd;
+                r=cfg.r, dt=cfg.dt,
+                dict_type=cfg.dict_type, dict_params=dict_params,
+                edmd_method=cfg.edmd_method, edmd_alpha=cfg.edmd_alpha,
+                proj_alpha=cfg.proj_alpha, return_ψ=false, use_svd=cfg.use_svd
+            )
+            return AnalysisResult(K_edmd, B_full, B_reduced, U_r, X_r,
+                                  dict_info, nothing, nothing, pd.S, cfg)
         end
     end
 end
