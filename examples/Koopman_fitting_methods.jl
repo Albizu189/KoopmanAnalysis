@@ -246,7 +246,7 @@ m_traj = div(n_train, n_traj) + max_lag + 1
 n_pairs_per_traj = m_traj - max_lag
 
 n_traj_test = 10
-window_ic_test = 2.0
+window_ic_test = 1.0
 x0_center = [0.0,0.5]
 
 println("dt = ", dt_internal, " s  |  nLag = ", nLag, "  |  dt_eff = ", dt_eff, " s")
@@ -361,7 +361,7 @@ S0_test = sample_seeds_window_integrated(
     f_det, x0_center, window_ic_test, length(x0_center), showdim,
     dt_internal, nLag, m_embed, tau_delay;
     n_starts=n_traj_test, direction=:backward,
-    rng=MersenneTwister(2024), max_consecutive_failures=10)
+    rng=MersenneTwister(2024), max_consecutive_failures=20)
 
 println("  S0_test: $(size(S0_test))  ($n_traj_test seeds)")
 
@@ -400,13 +400,13 @@ const RBF_DICT_PARAMS = (nRBF=1000, include_states=true,
 # ============================================================================
 
 METHOD_CONFIGS = Dict(
-    "DMD"           => (dict=:none, m_embed=1,       tau_delay=1,        rank=nothing, extra=(; use_svd=false, return_ψ=false)),
-    "Hankel_DMD"    => (dict=:none, m_embed=m_embed, tau_delay=tau_delay,      rank=nothing, extra=(; use_svd=true,  return_ψ=false)),
-    "HAVOK"         => (dict=:havok, m_embed=m_embed, tau_delay=tau_delay,      rank=:havok,  extra=(; use_svd=true,  return_ψ=false)),
-    "Hankel_DMD_r"  => (dict=:none, m_embed=m_embed, tau_delay=tau_delay,      rank=:havok,  extra=(; use_svd=true,  return_ψ=false)),
-    "EDMD"          => (dict=:RBF,  m_embed=1,       tau_delay=1,        rank=nothing, extra=(; use_svd=false, return_ψ=true)),
-    "Hankel_EDMD"   => (dict=:RBF,  m_embed=m_embed, tau_delay=tau_delay,      rank=nothing, extra=(; use_svd=true,  return_ψ=true)),
-    "Hankel_EDMD_r" => (dict=:RBF,  m_embed=m_embed, tau_delay=tau_delay,      rank=:havok,  extra=(; use_svd=true,  return_ψ=true)),
+    "DMD"           => (dict=:none, m_embed=1,       tau_delay=1,          rank=nothing, extra=(; use_svd=false, return_ψ=false)),
+    "Hankel_DMD"    => (dict=:none, m_embed=m_embed, tau_delay=tau_delay,  rank=nothing, extra=(; use_svd=true,  return_ψ=false)),
+    "HAVOK"         => (dict=:havok, m_embed=m_embed, tau_delay=tau_delay, rank=:havok,  extra=(; use_svd=true,  return_ψ=false)),
+    "Hankel_DMD_r"  => (dict=:none, m_embed=m_embed, tau_delay=tau_delay,  rank=:havok,  extra=(; use_svd=true,  return_ψ=false)),
+    "EDMD"          => (dict=:RBF,  m_embed=1,       tau_delay=1,          rank=nothing, extra=(; use_svd=false, return_ψ=true)),
+    "Hankel_EDMD"   => (dict=:RBF,  m_embed=m_embed, tau_delay=tau_delay,  rank=nothing, extra=(; use_svd=true,  return_ψ=true)),
+    "Hankel_EDMD_r" => (dict=:RBF,  m_embed=m_embed, tau_delay=tau_delay,  rank=:havok,  extra=(; use_svd=true,  return_ψ=true)),
 )
 
 function build_method_config(mid; dt, r_havok)
