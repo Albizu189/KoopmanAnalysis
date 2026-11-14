@@ -311,11 +311,24 @@ function pair_analysis(pd::NamedTuple, cfg::KoopmanConfig)
 end
 
 function state_analysis(X::AbstractMatrix, Y::AbstractMatrix, cfg::KoopmanConfig)
-    cfg.verbose && @info "Running state-space EDMD (dict=$(cfg.dict_type))..."
+    cfg.verbose && @info "Running state-space DMD/EDMD (dict=$(cfg.dict_type))..."
     n, m = size(X)
     dict_type = Symbol(lowercase(String(cfg.dict_type)))
 
-    if dict_type == :hermite
+    if dict_type == :none
+        # ── Plain linear DMD (no embedding, no dictionary) ──
+        K = Y * pinv(X)
+        B_reduced = Matrix{Float64}(I, n, n)
+        dict_info = (type=:linear,)
+        if cfg.return_ψ
+            return AnalysisResult(K, B_reduced, B_reduced, nothing, nothing,
+                                  dict_info, nothing, nothing, nothing, cfg)
+        else
+            return AnalysisResult(K, B_reduced, B_reduced, nothing, nothing,
+                                  dict_info, nothing, nothing, nothing, cfg)
+        end
+
+    elseif dict_type == :hermite
         max_deg = get(cfg.dict_params, :max_deg, 2)
         basis_type = get(cfg.dict_params, :basis_type, :probabilist)
         ΨX = Psi_Hermite(X, max_deg; basis_type=basis_type)
@@ -378,9 +391,9 @@ function state_analysis(X::AbstractMatrix, Y::AbstractMatrix, cfg::KoopmanConfig
         ΨY = Psi_RFF(Y, basis; include_states=include_states)
         B_reduced = construct_projection_operator(n, ΨX, X; alpha=cfg.proj_alpha)
         dict_info = (type=:rff, basis=basis, include_states=include_states)
-
+    
     else
-        error("Unknown dict_type: $dict_type. Use :hermite, :rbf, :rff, or :none.")
+        error("Unknown dict_type: $dict_type. Use :none, :hermite, :rbf, or :rff.")
     end
 
     K_edmd = compute_koopman_operator(ΨX, ΨY; method=cfg.edmd_method, alpha=cfg.edmd_alpha)

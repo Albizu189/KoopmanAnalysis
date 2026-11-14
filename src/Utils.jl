@@ -16,7 +16,7 @@ export normalize_vector, signed_area, meshgrid_2d, classify_fixed_point_2d,
        grad_Psi_RBF, grad_phi, find_zls_gradient_descent,
        configure_threads!,
        # --- state standardization for dictionaries (added) ---
-       normalize_states, apply_norm_stats
+       normalize_states, apply_norm_stats, sample_seeds_window_integrated
 
 """
     normalize_vector(x; lb=0.35)
@@ -688,6 +688,111 @@ Standardize `X` using previously computed `stats = (mean, std)` from
 """
 function apply_norm_stats(X::AbstractMatrix, stats)
     return (X .- stats.mean) ./ stats.std
+end
+
+"""
+    sample_seeds_window_integrated(f_dyn, x0_center, window_ic, dim, showdim,
+                                   dt_internal, nLag, m_embed, tau_delay;
+                                   n_starts, direction, rng,
+                                   max_consecutive_failures)
+
+Sample random initial conditions in the physical `dim`-D window
+
+    x0[v] ~ Uniform(x0_center[v] - window_ic, x0_center[v] + window_ic),
+    v in showdim   (non-shown components are pinned at x0_center),
+
+then fill the `(m_embed - 1) * tau_delay` older delay coordinates by
+integrating the true dynamics.  Two directions:
+
+  `direction = :forward`  — integrate `f_dyn` forward from `x0`; the drawn
+                            uniform point becomes the OLDEST delay coordinate
+                            and the anchor ("current") is the evolved point.
+  `direction = :backward` — integrate the time-reversed drift `-f_dyn`; the
+                            drawn uniform point IS the anchor and the delays
+                            are its true past.
+
+Unlike iid-delay sampling, every returned point lies on the system's
+trajectory manifold.  NaN / Inf trajectories are rejected and resampled
+(with a `max_consecutive_failures` guard to avoid infinite loops when the
+window is too large).
+
+Returns an `n_state × n_starts` matrix where `n_state = length(showdim) * m_embed`.
+"""
+function sample_seeds_window_integrated(f_dyn, x0_center::AbstractVector,
+                                        window_ic::Real, dim::Int,
+                                        showdim::AbstractVector{<:Integer},
+                                        dt_internal::Real, nLag::Int,
+                                        m_embed::Int, tau_delay::Int;
+                                        n_starts::Int,
+                                        direction::Symbol=:backward,
+                                        rng::AbstractRNG=Random.default_rng(),
+                                        max_consecutive_failures::Int=10)
+
+    @assert direction in (:forward, :backward) "direction must be :forward or :backward"
+    @assert max_consecutive_failures >= 1
+
+    n_show  = length(showdim)
+    n_state = n_show * m_embed
+    n_fill  = (m_embed - 1) * tau_delay
+
+    # Backward = forward integration of time-reversed drift
+    f_int = direction == :forward ? f_dyn : (x -> -f_dyn(x))
+
+    S0 = Matrix{Float64}(undef, n_state, n_starts)
+    consecutive_failures = 0
+    total_failures = 0
+
+    for i in 1:n_starts
+        while true
+            # Draw full physical IC; non-shown coords pinned at x0_center
+            x0 = Vector{Float64}(x0_center[1:dim])
+            for v in 1:dim
+                x0[v] = x0_center[v] + window_ic * (2 * rand(rng) - 1)
+            end
+
+            candidate = try
+                X_seg = rk4(f_int, x0, dt_internal, n_fill; nLag=nLag)
+
+                if direction == :backward
+                    X_seg = reverse(X_seg; dims=2)
+                    X_seg[:, end] = x0   # preserve drawn point as anchor
+                end
+
+                if !all(isfinite, X_seg)
+                    nothing
+                else
+                    S_seg = build_hankel_multichannel(
+                        X_seg[showdim, :], m_embed, tau_delay)
+                    s = S_seg[:, end]
+                    all(isfinite, s) ? s : nothing
+                end
+            catch err
+                err isa InterruptException && rethrow()
+                nothing
+            end
+
+            if !isnothing(candidate)
+                S0[:, i] = candidate
+                consecutive_failures = 0
+                break
+            end
+
+            total_failures += 1
+            consecutive_failures += 1
+
+            if consecutive_failures >= max_consecutive_failures
+                error("Delay filling produced $consecutive_failures consecutive " *
+                      "non-finite trajectories with window_ic=$window_ic and " *
+                      "direction=$direction. Use a tighter physical window.")
+            end
+        end
+    end
+
+    if total_failures > 0
+        println("  Integrated-window sampling rejected $total_failures non-finite trajectories.")
+    end
+
+    return S0
 end
 
 end # module
