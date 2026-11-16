@@ -86,7 +86,7 @@ export
     finite_difference_jacobian, mutual_information, find_first_minimum,
     false_nearest_neighbors,
     grad_Psi_RBF, grad_phi, find_zls_gradient_descent,
-    normalize_states, apply_norm_stats, sample_seeds_window_integrated,
+    normalize_states, apply_norm_stats,
     # Systems
     euler_maruyama, rk4, generate_trajectories, detect_limit_cycle,
     fhn_rhs, fhn_drift, fhn_diffusion, fhn_parameters,
@@ -115,6 +115,7 @@ export
     # DataGeneration
     edmd_training_data, hankel_training_data, state_space_predictions,
     delay_space_predictions, state_space_predict_from_psi,
+    sample_seeds_window_integrated,
     # Spectral
     koopman_eigendecomposition, detect_limit_cycle_modes,
     build_harmonic_branch, find_all_harmonic_branches, select_phase_amplitude_modes,

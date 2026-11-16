@@ -344,7 +344,7 @@ F_havok = svd(H_havok)
 Σ       = F_havok.S
 total_energy = sum(Σ.^2)
 cum_energy   = cumsum(Σ.^2)
-r_havok      = findfirst(cum_energy .>= 0.99 * total_energy)
+r_havok      = findfirst(cum_energy .>= 0.999 * total_energy)
 if isnothing(r_havok)
     r_havok = length(Σ)
 end
@@ -358,7 +358,7 @@ println("  Energy threshold: 0.99  →  rank r = $r_havok  (captures " *
 println("\nGenerating test starting points via window-integrated sampling ...")
 
 S0_test = sample_seeds_window_integrated(
-    f_det, x0_center, window_ic_test, length(x0_center), showdim,
+    f_det, x0_silent, window_ic_test, length(x0_silent), showdim,
     dt_internal, nLag, m_embed, tau_delay;
     n_starts=n_traj_test, direction=:backward,
     rng=MersenneTwister(2024), max_consecutive_failures=20)
