@@ -10,6 +10,7 @@
 #   01 — Starting points (2D scatter + density grid)
 #   20 — ZLS of all real eigenfunctions (huge grid)
 #   21.. — Progressive joint interceptions (top-2, top-3, ..., top-k)
+#   23.. — Phase-eigenfunction-colored progressive joint interceptions
 # ============================================================================
 
 using KoopmanAnalysis
@@ -556,6 +557,41 @@ else
 
             save(joinpath(save_dir, "21_joint_interception_top$(k).png"), fig)
             println("  Saved: 21_joint_interception_top$(k).png")
+
+            # ---- Figure 23: phase-eigenfunction-colored progressive interception ----
+            if j_phase > 0
+                S_joint_dict = to_dict_space(joint_zls)
+                Psi_joint    = Psi_slice(S_joint_dict, dict_info)
+                φ_vals       = vec(Ξ[:, j_phase]' * Psi_joint)
+                θ_vals       = angle.(φ_vals)
+
+                fig_phase = Figure(size=(950, 600))
+                modes_str = join(["j=$j (λ=$(round(real(λ[j]), digits=4)))" for j in modes_k], ",\n")
+
+                if n_show >= 3
+                    ax_phase = Axis3(fig_phase[1, 1];
+                        title="Progressive interception (top-$k) — colored by phase eigenfunction\n$modes_str\n$(size(joint_zls, 2)) pts",
+                        xlabel="v", ylabel="w", zlabel="z")
+                    hm = scatter!(ax_phase, pts_draw[1, :], pts_draw[2, :], pts_draw[3, :];
+                             color=θ_vals[idx_draw], colormap=:thermal, markersize=6,
+                             colorrange=(-π, π))
+                    lines!(ax_phase, lc_x, lc_y, lc_z; color=(:black, 0.5), linewidth=1.5)
+                else
+                    ax_phase = Axis(fig_phase[1, 1];
+                        title="Progressive interception (top-$k) — colored by phase eigenfunction\n$modes_str\n$(size(joint_zls, 2)) pts",
+                        xlabel="v", ylabel="w")
+                    hm = scatter!(ax_phase, pts_draw[1, :], pts_draw[2, :];
+                             color=θ_vals[idx_draw], colormap=:thermal, markersize=6,
+                             colorrange=(-π, π))
+                    lines!(ax_phase, lc_x, lc_y; color=(:black, 0.5), linewidth=1.5)
+                end
+                Colorbar(fig_phase[1, 2], hm; label="arg(φ_phase) [rad]", width=14)
+
+                save(joinpath(save_dir, "23_joint_interception_top$(k)_phase.png"), fig_phase)
+                println("  Saved: 23_joint_interception_top$(k)_phase.png")
+                fig_phase = nothing; GC.gc()
+            end
+
             fig = nothing; pts_plot = nothing; pts_draw = nothing; GC.gc()
         end
     end
