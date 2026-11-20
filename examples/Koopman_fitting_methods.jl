@@ -98,7 +98,7 @@ end
 # GLOBAL CONFIGURATION
 # ============================================================================
 
-experiment_type = "StateSpace-LargeExp-multitraj-delays"
+experiment_type = "StateSpace-MediumExp-multitraj-delays"
 regime_system   = "FHN"
 regime_name     = length(ARGS) > 0 ? ARGS[1] : "stable-limit-cycle"
 
@@ -228,8 +228,7 @@ dt_internal = 0.01
 nLag        = 10
 dt_eff      = dt_internal * nLag
 
-n_train  = 1500000
-n_test   = 10000
+n_train  = 750000
 n_pred   = 5000
 
 m_embed   = 20
@@ -238,8 +237,8 @@ max_lag   = (m_embed - 1) * tau_delay
 
 burn_in  = 0   # discarded snapshots from the start of each trajectory
 
-n_traj       = 2000
-window_ic    = 2.0
+n_traj       = 1000
+window_ic    = 1.0
 
 # Length of each training trajectory (including lag buffer for delay embedding)
 m_traj = div(n_train, n_traj) + max_lag + 1
@@ -247,11 +246,10 @@ n_pairs_per_traj = m_traj - max_lag
 
 n_traj_test = 10
 window_ic_test = 1.0
-x0_center = [0.0,0.5]
 
 println("dt = ", dt_internal, " s  |  nLag = ", nLag, "  |  dt_eff = ", dt_eff, " s")
 println("Embedding: m=$m_embed, tau=$tau_delay, max_lag=$max_lag")
-println("Train: $n_train snapshots  |  Test: $n_test snapshots  |  Predict: $n_pred steps")
+println("Train: $n_train snapshots |  Predict: $n_pred steps")
 println("Trajectories: $n_traj × $m_traj steps  ($n_pairs_per_traj pairs each)")
 
 # ============================================================================
@@ -353,47 +351,52 @@ println("  Energy threshold: 0.99  →  rank r = $r_havok  (captures " *
         "$(round(100*cum_energy[r_havok]/total_energy, digits=2))% of variance)")
 
 # ============================================================================
-# TEST STARTING POINTS — window-integrated backward sampling
+# TEST DATA — multi-trajectory with perturbed ICs (same paradigm as training)
 # ============================================================================
-println("\nGenerating test starting points via window-integrated sampling ...")
+println("\nGenerating test data (multi-trajectory, perturbed ICs)...")
 
-S0_test = sample_seeds_window_integrated(
-    f_det, x0_silent, window_ic_test, length(x0_silent), showdim,
-    dt_internal, nLag, m_embed, tau_delay;
-    n_starts=n_traj_test, direction=:backward,
-    rng=MersenneTwister(2024), max_consecutive_failures=20)
+m_test = n_pred + max_lag + 1
+X_test_raw, Y_test_raw, _, _, _ = edmd_training_data(
+    regime_system, regime_name;
+    m_train        = m_test,
+    n_trajectories = n_traj_test,
+    window         = window_ic_test,
+    dt             = dt_internal,
+    nLag           = nLag,
+    center         = x0_silent
+)
 
-println("  S0_test: $(size(S0_test))  ($n_traj_test seeds)")
-
-# Physical anchor indices within each delay vector
+n_state = n_show * m_embed
 phys_idx = [(j - 1) * m_embed + 1 for j in 1:n_show]
 
-# Pre-generate TRUE trajectories by forward integration from anchors
+# Build per-trajectory delay matrices and extract ICs
+S0_test = zeros(n_state, n_traj_test)           # delay-space initial conditions
+S_test_for_havok = Matrix{Float64}[]            # full delay matrices for HAVOK forcing
 X_true_all = zeros(n_show, n_pred + 1, n_traj_test)
-S_test_for_havok = Matrix{Float64}[]   # per-trajectory delay matrices for HAVOK
 
-for j in 1:n_traj_test
-    x0_anchor = S0_test[phys_idx, j]
-    # True trajectory: integrate forward n_pred effective steps
-    X_seg = rk4(f_det, x0_anchor, dt_internal, n_pred; nLag=nLag)
-    X_true_all[:, :, j] = X_seg[showdim, :]
-
-    # HAVOK forcing needs a delay matrix of the true trajectory
-    # Build with enough lag buffer for embedding
-    X_seg_havok = rk4(f_det, x0_anchor, dt_internal,
-                      n_pred + max_lag; nLag=nLag)
-    S_havok_j = build_hankel_multichannel(X_seg_havok[showdim, :], m_embed, tau_delay)
-    push!(S_test_for_havok, S_havok_j)
+for t in 1:n_traj_test
+    start_col = (t - 1) * m_test + 1
+    end_col   = t * m_test
+    X_traj    = X_test_raw[showdim, start_col:end_col]
+    
+    S_traj = build_hankel_multichannel(X_traj, m_embed, tau_delay)
+    push!(S_test_for_havok, S_traj)
+    S0_test[:, t] = S_traj[:, 1]
+    
+    # True trajectory from the anchor point (first valid delay state)
+    anchor_raw_idx = max_lag + 1
+    X_true_all[:, :, t] = X_traj[:, anchor_raw_idx : anchor_raw_idx + n_pred]
 end
 
-println("  True trajectories pre-generated for all $n_traj_test seeds")
+println("  Test trajectories: $n_traj_test × $m_test steps")
+println("  S0_test (delay ICs): $(size(S0_test))")
 
 # ============================================================================
 # STATE-SPACE DICTIONARY (RBF) — subsampled before clustering to avoid OOM
 # ============================================================================
 const RBF_DICT_PARAMS = (nRBF=1000, include_states=true,
-                         kernel_type=:thinplate, seed=42,
-                         max_points=50000)
+                         kernel_type=:thinplate, seed=SEED,
+                         max_points=nothing)
 
 # ============================================================================
 # METHOD CONFIGURATION
@@ -405,7 +408,7 @@ METHOD_CONFIGS = Dict(
     "HAVOK"         => (dict=:havok, m_embed=m_embed, tau_delay=tau_delay, rank=:havok,  extra=(; use_svd=true,  return_ψ=false)),
     "Hankel_DMD_r"  => (dict=:none, m_embed=m_embed, tau_delay=tau_delay,  rank=:havok,  extra=(; use_svd=true,  return_ψ=false)),
     "EDMD"          => (dict=:RBF,  m_embed=1,       tau_delay=1,          rank=nothing, extra=(; use_svd=false, return_ψ=true)),
-    "Hankel_EDMD"   => (dict=:RBF,  m_embed=m_embed, tau_delay=tau_delay,  rank=nothing, extra=(; use_svd=true,  return_ψ=true)),
+    "Hankel_EDMD"   => (dict=:RBF,  m_embed=m_embed, tau_delay=tau_delay,  rank=nothing, extra=(; use_svd=false,  return_ψ=true)),
     "Hankel_EDMD_r" => (dict=:RBF,  m_embed=m_embed, tau_delay=tau_delay,  rank=:havok,  extra=(; use_svd=true,  return_ψ=true)),
 )
 
@@ -524,13 +527,13 @@ end
 # ============================================================================
 
 method_list = [
-    ("DMD",           "DMD (no embedding)"),
-    ("Hankel_DMD",    "Hankel-DMD (full rank)"),
-    ("HAVOK",         "HAVOK (continuous, RK4)"),
-    ("Hankel_DMD_r",  "Hankel-DMD (r = HAVOK rank)"),
-    ("EDMD",          "RBF-EDMD (no embedding)"),
-    ("Hankel_EDMD",   "Hankel RBF-EDMD (full)"),
-    ("Hankel_EDMD_r", "Hankel RBF-EDMD (r = HAVOK rank)"),
+#    ("DMD",           "DMD (no embedding)"),
+#    ("Hankel_DMD",    "Hankel-DMD (full rank)"),
+#    ("HAVOK",         "HAVOK (continuous, RK4)"),
+#    ("Hankel_DMD_r",  "Hankel-DMD (r = HAVOK rank)"),
+#    ("EDMD",          "RBF-EDMD (no embedding)"),
+    ("Hankel_EDMD",   "Hankel RBF-EDMD (full)")
+#    ("Hankel_EDMD_r", "Hankel RBF-EDMD (r = HAVOK rank)"),
 ]
 
 all_results = Dict{String,Any}()
@@ -567,6 +570,16 @@ for (mid, tag) in method_list
                                n_trajectories=n_traj)
         println("  Using delay-embedded pairs: ", size(pd.S))
         res = pair_analysis(pd, cfg)
+
+        if mid == "Hankel_EDMD"
+            @assert !cfg.use_svd
+            @assert res.dict_info.centers == WORKING_CENTERS
+            @assert size(res.K) == size(WORKING_K)
+
+            rel_K_error = norm(res.K - WORKING_K) / norm(WORKING_K)
+            println("  Working centres reused: yes")
+            println("  Relative K difference from working run = ", rel_K_error)
+        end
     end
     println("  Koopman matrix size: $(size(res.K))")
 
@@ -698,12 +711,12 @@ Label(fig1[row_start, :], "Prediction accuracy comparison — v(t) only",
 row_start += 1
 Label(fig1[row_start, :],
       "$regime_system $regime_name — $n_traj_test trajectories, $n_pred-step horizon",
-      fontsize=18, tellwidth=false, halign=:center)
+      fontsize=20, tellwidth=false, halign=:center)
 row_start += 1
 
 ax_real = Axis(fig1[row_start, 1],
     title="Real trajectories", xlabel="Step", ylabel="v(t)",
-    titlesize=18, titlefont=:bold)
+    titlesize=20, titlefont=:bold)
 
 cols_real = blue_tones(n_traj_test)
 cols_pred = orange_tones(n_traj_test)
@@ -735,7 +748,7 @@ for (i, (mid, tag)) in enumerate(method_list)
     end
 
     ax = Axis(fig1[row, col], title="$mid: $tag | $sub",
-        xlabel="Step", ylabel="v(t)", titlesize=12, titlefont=:bold)
+        xlabel="Step", ylabel="v(t)", titlesize=20, titlefont=:bold)
 
     X_pred = all_results[mid]["X_pred"]
     for j in 1:n_traj_test
@@ -747,7 +760,7 @@ end
 
 err_row = row_start + n_method_rows
 ax_err = Axis(fig1[err_row, :], title="Average RMSE — v(t)",
-    xlabel="Step", ylabel="RMSE", titlesize=18, titlefont=:bold)
+    xlabel="Step", ylabel="RMSE", titlesize=20, titlefont=:bold)
 
 for (mid, _) in method_list
     X_pred = all_results[mid]["X_pred"]
@@ -768,11 +781,11 @@ println("\nBuilding Figure 11: Spectrum comparison...")
 
 fig_spec = Figure(size=(1800, 800))
 Label(fig_spec[0, :], "Koopman spectrum comparison — all methods",
-      fontsize=22, font=:bold, tellwidth=false, halign=:center)
+      fontsize=24, font=:bold, tellwidth=false, halign=:center)
 
 ax1 = Axis(fig_spec[1, 1], title="Discrete eigenvalues λ",
     xlabel="Re(λ)", ylabel="Im(λ)", aspect=DataAspect(),
-    titlesize=16, titlefont=:bold)
+    titlesize=20, titlefont=:bold)
 θ = range(0.0, 2π, length=200)
 lines!(ax1, cos.(θ), sin.(θ), color=(:black, 0.4), linewidth=1, linestyle=:dash)
 hlines!(ax1, 0.0, color=(:black, 0.2), linewidth=0.5)
@@ -781,7 +794,7 @@ vlines!(ax1, 0.0, color=(:black, 0.2), linewidth=0.5)
 ax2 = Axis(fig_spec[1, 2],
     title="Continuous-time analogue  μ = log(λ)/dt_eff",
     xlabel="Re(μ) (growth rate, 1/s)", ylabel="Im(μ) (angular frequency, rad/s)",
-    titlesize=16, titlefont=:bold)
+    titlesize=20, titlefont=:bold)
 hlines!(ax2, 0.0, color=(:black, 0.2), linewidth=0.5)
 vlines!(ax2, 0.0, color=(:black, 0.4), linewidth=1, linestyle=:dash)
 
@@ -815,20 +828,25 @@ rbf_methods = [mid for (mid, _) in method_list
 
 for mid in rbf_methods
     res_l = all_results[mid]["res"]
-    (!haskey(res_l, :dict_info) || !haskey(res_l.dict_info, :centers)) && continue
+    
+    # dict_info is a field of AnalysisResult (struct, not Dict)
+    # Check if it has the :centers key (dict_info is typically a NamedTuple)
+    di = res_l.dict_info
+    (!haskey(di, :centers)) && continue
 
-    cd = res_l.dict_info.centers
+    cd = di.centers
     if !isnothing(res_l.U_r)
         cd = res_l.U_r * cd
     end
-    ktype = get(res_l.dict_info, :kernel_type, :thinplate)
+    ktype = get(di, :kernel_type, :thinplate)
 
-    fig = Figure(size=(800, 800))
-    ax = Axis(fig[1, 1], title="$mid — $(ktype) RBF centres ($(size(cd, 2)))",
-        xlabel="v", ylabel="w", titlesize=16, titlefont=:bold)
+    local fig_rbf = Figure(size=(800, 800))
+    ax = Axis(fig_rbf[1, 1], title="$mid — $(ktype) RBF centres ($(size(cd, 2)))",
+        xlabel="v", ylabel="w", titlesize=20, titlefont=:bold)
 
     n_bg = min(10000, size(X_train_raw, 2))
-    idx_bg = rand(1:size(X_train_raw, 2), n_bg)
+    rng_bg = MersenneTwister(SEED)
+    idx_bg = rand(rng_bg, 1:size(X_train_raw, 2), n_bg)
     scatter!(ax, X_train_raw[1, idx_bg], X_train_raw[2, idx_bg],
              color=(:gray, 0.1), markersize=2)
 
@@ -843,9 +861,9 @@ for mid in rbf_methods
     end
     axislegend(ax)
 
-    save(joinpath(save_dir, "12_rbf_centers_$mid.png"), fig)
+    save(joinpath(save_dir, "12_rbf_centers_$mid.png"), fig_rbf)
     println("Saved: 12_rbf_centers_$mid.png")
-    fig = nothing; GC.gc()
+    fig_rbf = nothing; GC.gc()
 end
 
 # ============================================================================
@@ -875,7 +893,6 @@ jldopen(save_path, "a+") do f
     f["metadata/dt_eff"]        = dt_eff
     f["metadata/nLag"]          = nLag
     f["metadata/n_train"]       = n_train
-    f["metadata/n_test"]        = n_test
     f["metadata/n_pred"]        = n_pred
     f["metadata/m_embed"]       = m_embed
     f["metadata/tau_delay"]           = tau_delay
