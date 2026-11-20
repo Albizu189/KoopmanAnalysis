@@ -41,7 +41,7 @@ export OPENBLAS_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 export OMP_NUM_THREADS=1
 
-SAVE_DIR_PATTERN="${PROJECT_DIR}/results/${EXPERIMENT_TYPE}"
+SAVE_DIR_PATTERN="${PROJECT_DIR}/logs/${EXPERIMENT_TYPE}"
 JULIA_BIN=$(which julia 2>/dev/null || echo "julia")
 
 SESSION_NAME="koopman_fitting_analysis"
