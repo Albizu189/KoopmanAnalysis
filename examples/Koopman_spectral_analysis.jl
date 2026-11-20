@@ -14,9 +14,9 @@
 # ============================================================================
 
 using KoopmanAnalysis
-using KoopmanAnalysis.Utils: find_zls_gradient_descent, grad_phi,
-       sample_seeds_window_integrated, normalize_vector
+using KoopmanAnalysis.Utils: find_zls_gradient_descent, grad_phi, normalize_vector
 using KoopmanAnalysis.Dictionaries: Psi_slice
+using KoopmanAnalysis.DataGeneration: sample_seeds_window_integrated
 using KoopmanAnalysis.Systems
 using KoopmanAnalysis.Hankel
 using KoopmanAnalysis.Plotting
@@ -42,6 +42,9 @@ const SEED = 42
 Random.seed!(SEED)
 BLAS.set_num_threads(1)
 println("Running with $(nthreads()) Julia threads.")
+
+const TOL_IMAG_REAL = 1e-4
+const TOL_UNITY = 1e-4
 
 # ============================================================================
 # UTILITIES
@@ -243,7 +246,7 @@ branch_idx = Int[]
 try
     global j_phase, mu_phase, j_amp, mu_amp, branch_idx =
         select_phase_amplitude_modes(λ, dt_eff;
-            TOL_UNITY=1e-4, TOL_IMAG=1e-4, TOL_HARMONIC=0.05, tol_growth=1.0)
+            TOL_UNITY=TOL_UNITY, TOL_IMAG=TOL_IMAG_REAL, TOL_HARMONIC=0.05, tol_growth=1.0)
     println("Phase mode:      j=$j_phase, λ=$(round(λ[j_phase], digits=6))")
     println("Amplitude mode:  j=$j_amp, λ=$(round(λ[j_amp], digits=6))")
 catch e
@@ -254,27 +257,28 @@ end
 # 2. WINDOW-INTEGRATED SEED SAMPLING
 # ============================================================================
 
-window_ic = 1.0   # same as Script 1's edmd_training_data window
+window_ic = 2.0
+x0_center = [0.0,0.5]        # x0_silen by default
 fill_direction = :backward
-n_starts_modes = 100000
-n_starts_joint = 100000
-n_joint_modes_max = 7   # progressive up to top-7
+n_starts_modes = 1000
+n_starts_joint = 1000
+n_joint_modes_max = 7
 
 println("\n" * "="^60)
 println("Sampling seeds (window-integrated, $fill_direction)...")
 println("="^60)
 
 S0_modes = sample_seeds_window_integrated(
-    f_det, x0_silent, window_ic, length(x0_silent), showdim,
+    f_det, x0_center, window_ic, length(x0_center), showdim,
     dt_internal, nLag, m_embed, tau_delay;
     n_starts=n_starts_modes, direction=fill_direction,
     rng=MersenneTwister(SEED), max_consecutive_failures=10)
 
 S0_joint = sample_seeds_window_integrated(
-    f_det, x0_silent, window_ic, length(x0_silent), showdim,
+    f_det, x0_center, window_ic, length(x0_center), showdim,
     dt_internal, nLag, m_embed, tau_delay;
     n_starts=n_starts_joint, direction=fill_direction,
-    rng=MersenneTwister(SEED ⊻ 0x01), max_consecutive_failures=10)
+    rng=MersenneTwister(SEED), max_consecutive_failures=10)
 
 println("  S0_modes: $(size(S0_modes))")
 println("  S0_joint: $(size(S0_joint))")
@@ -289,9 +293,8 @@ print_mem("after seed sampling")
 # 3. ZLS FOR ALL REAL EIGENVALUES
 # ============================================================================
 
-const TOL_IMAG_REAL = 1e-5
 real_eig_indices = findall(x -> abs(imag(x)) < TOL_IMAG_REAL &&
-                                abs(real(x) - 1.0) > 1e-4 &&
+                                abs(real(x) - 1.0) > TOL_UNITY &&
                                 abs(real(x)) < 1.0, λ)
 
 println("\nFound $(length(real_eig_indices)) real eigenvalues inside the unit circle:")
@@ -333,9 +336,9 @@ for j in real_eig_indices
     zls_pts_dict = find_zls_gradient_descent(
         S0_modes_dict, Psi_method, Ξ, j, dict_info;
         starts = S0_modes_dict,   # use our integrated seeds
-        n_iter = 500,
+        n_iter = 1e5,
         lr     = 0.1,
-        tol    = 1e-18,
+        tol    = 1e-20,
         verbose = false,
         seed   = SEED,
     )
@@ -454,14 +457,14 @@ else
         if n_show >= 3
             ax = Axis3(fig[row, col]; title=title_j, titlegap=5,
                 xlabel="v", ylabel="w", zlabel="z",
-                xlabelsize=10, ylabelsize=10, zlabelsize=10, titlesize=12)
+                xlabelsize=10, ylabelsize=10, zlabelsize=10, titlesize=18)
             scatter!(ax, pts_draw[1, :], pts_draw[2, :], pts_draw[3, :];
                      color=(:orange, 0.6), markersize=4)
             lines!(ax, lc_x, lc_y, lc_z; color=(COLOR_PRIMARY, 1.0), linewidth=1.5)
         else
             ax = Axis(fig[row, col]; title=title_j, titlegap=5,
                 xlabel="v", ylabel="w",
-                xlabelsize=10, ylabelsize=10, titlesize=12)
+                xlabelsize=10, ylabelsize=10, titlesize=18)
             scatter!(ax, pts_draw[1, :], pts_draw[2, :];
                      color=COLOR_ACCENT, strokecolor=:black, strokewidth=0.5,
                      markersize=6)
@@ -508,9 +511,9 @@ else
             joint_pts_dict = find_zls_gradient_descent(
                 S0_joint_dict, Psi_method, Ξ, modes_k, dict_info;
                 starts   = S0_joint_dict,
-                n_iter   = 500,
+                n_iter   = 1e5,
                 lr       = 0.1,
-                tol      = 1e-12,
+                tol      = 1e-20,
                 verbose  = false,
                 seed     = SEED,
             )
@@ -605,7 +608,7 @@ println("\nBuilding spectrum comparison figure...")
 
 fig_spec = Figure(size=(1200, 500))
 Label(fig_spec[0, :], "Koopman spectrum — $spectral_method",
-      fontsize=20, font=:bold)
+      fontsize=24, font=:bold)
 
 ax1 = Axis(fig_spec[1, 1], title="Discrete eigenvalues",
     xlabel="Re(λ)", ylabel="Im(λ)", aspect=DataAspect())
