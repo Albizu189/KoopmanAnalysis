@@ -859,6 +859,62 @@ end
 end
 
 # ============================================================================
+# Multitrjectory analysis
+# ============================================================================
+
+@testset "multi-trajectory pair fitting (delay_embed_pairs / pair_analysis)" begin
+    m_traj, P = 400, 3
+    X_raw, Y_raw, cfg0, rhs, x0 = edmd_training_data("Duffing", "limit-cycle";
+        m_train=m_traj, n_trajectories=P, window=0.3, dt=0.01, nLag=5, seed=11)
+
+    # (a) pair views == materialised delay_embed_training_data
+    m_embed, tau = 8, 2
+    Xd, Yd = delay_embed_training_data(X_raw, Y_raw, m_embed, tau; n_trajectories=P)
+    pd = delay_embed_pairs(X_raw, Y_raw, m_embed, tau; n_trajectories=P)
+    Xv, Yv = pair_views(pd)
+    @test Xv == Xd && Yv == Yd
+    # every y is the in-block successor of the corresponding x
+    for i in 1:P
+        o = (i - 1) * pd.n_pairs
+        @test pd.x[o+1] == pd.cols[i][1]
+        @test pd.y[o + pd.n_pairs] == pd.cols[i][end]
+        @test all(pd.y[o+1:o+pd.n_pairs] .- pd.x[o+1:o+pd.n_pairs] .== 1)
+    end
+
+    # (b) single-trajectory limit reproduces the Hankel pipeline exactly
+    X1, Y1 = X_raw[:, 1:m_traj], Y_raw[:, 1:m_traj]
+    traj = hcat(X1[:, 1], Y1)                     # n × (m_traj+1)
+    S = build_hankel_multichannel(traj, m_embed, tau)
+    pd1 = delay_embed_pairs(X1, Y1, m_embed, tau; n_trajectories=1)
+    @test pd1.S == S
+
+    cfg = KoopmanConfig(; m_embed=m_embed, tau_delay=tau, r=5, use_svd=true,
+                         dict_type=:none, dt=0.05, verbose=false)
+    @test hankel_analysis(S, cfg).K ≈ pair_analysis(pd1, cfg).K rtol=1e-8
+
+    # (c) HAVOK equivalence in the same limit
+    cfg_h = KoopmanConfig(; m_embed=m_embed, tau_delay=tau, r=6, use_svd=true,
+                           dict_type=:havok, dt=0.05, verbose=false,
+                           dict_params=(rank_method=:energy, energy=0.999,
+                                        ridge_alpha=0.0))
+    res_h = hankel_analysis(S, cfg_h)
+    res_p = pair_analysis(pd1, cfg_h)
+    @test res_h.dict_info.A ≈ res_p.dict_info.A rtol=1e-8
+    @test res_h.dict_info.B ≈ res_p.dict_info.B rtol=1e-8
+
+    # (d) multi-trajectory EDMD smoke test + shared-parent memory contract
+    cfg_e = KoopmanConfig(; m_embed=m_embed, tau_delay=tau, r=nothing, use_svd=false,
+                          dict_type=:RBF, dt=0.05, verbose=false, return_ψ=true,
+                          dict_params=(nRBF=20, include_states=true,
+                                       kernel_type=:thinplate, seed=1))
+    res_e = pair_analysis(pd, cfg_e)
+    @test size(res_e.K, 1) == size(res_e.K, 2)
+    @test parent(res_e.ΨX) === parent(res_e.ΨY)   # one lifted parent only
+    λ, Ξ = spectrum(res_e; howmany=10)
+    @test length(λ) == 10
+end
+
+# ============================================================================
 # DataGeneration
 # ============================================================================
 @testset "DataGeneration" begin

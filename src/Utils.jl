@@ -384,6 +384,7 @@ end
 #  ever touch the same memory.  Only the progress-bar counter, the converged
 #  count, and `f_max` are shared — all guarded by atomics + a small lock.
 # ---------------------------------------------------------------------------
+
 """
     find_zls_gradient_descent(S, Psi_func, Ξ, j_modes, dict_info; kwargs...)
 
@@ -393,7 +394,8 @@ search (Armijo condition).
 
 # Arguments
 - `S`          : `n_dim × n_snap` snapshot matrix; start points are sampled
-                 from its columns.
+                 from its columns (unless `starts` is given). Also used to
+                 estimate the objective scale `f_scale`.
 - `Psi_func`   : callable `X -> Ψ(X)` returning the lifted dictionary
                  matrix (the same closure you use elsewhere in the pipeline).
 - `Ξ`          : matrix of Koopman eigenvectors (columns are eigenvectors).
@@ -403,12 +405,15 @@ search (Armijo condition).
 
 # Keyword arguments
 - `n_starts` : number of starts sampled from `S` (default 500).
+               Ignored when `starts` is provided.
+- `starts`   : `nothing` (default) or an `n_dim × k` matrix whose columns
+               are used verbatim as gradient-descent start points
+               (e.g. homogeneous union-of-balls samples). When given,
+               exactly `k` starts are run.
 - `n_iter`   : max gradient-descent iterations per start (default 200).
 - `lr`       : base learning rate (default 0.1).
 - `tol`      : gradient-norm convergence threshold (default 1e-8).
 - `verbose`  : print iteration log for start #1 only (default true).
-- `seed`     : optional random seed for the start-point sampling; identical
-  seeds give identical start sets and identical results (default nothing).
 
 # Returns
 - `Vector{Vector{Float64}}` of de-duplicated converged points (radius 0.05).
@@ -420,10 +425,11 @@ oversubscription.
 """
 function find_zls_gradient_descent(S::AbstractMatrix, Psi_func::Function,
                                     Ξ::AbstractMatrix, j_modes, dict_info::NamedTuple;
-                                    n_starts::Int=500, n_iter::Int=200,
+                                    n_starts::Int=500,
+                                    starts::Union{Nothing,AbstractMatrix}=nothing,
+                                    n_iter::Int=200,
                                     lr::Float64=0.1, tol::Float64=1e-8,
-                                    verbose::Bool=true,
-                                    seed::Union{Nothing,Int}=nothing)
+                                    verbose::Bool=true)
     # ---- Normalize j_modes to a vector ---------------------------------
     if j_modes isa Integer
         j_modes = [Int(j_modes)]
@@ -431,8 +437,6 @@ function find_zls_gradient_descent(S::AbstractMatrix, Psi_func::Function,
         j_modes = collect(Int, j_modes)
     end
     n_modes = length(j_modes)
-
-    isnothing(seed) || Random.seed!(seed)
 
     n_dim, n_snap = size(S)
     ξs = [Ξ[:, j] for j in j_modes]   # read-only column views (one per mode)
@@ -443,7 +447,6 @@ function find_zls_gradient_descent(S::AbstractMatrix, Psi_func::Function,
 
     n_threads = nthreads()
     println("    [grad-desc] Modes: $j_modes  (objective: f = $mode_str)")
-    println("    [grad-desc] Starting from $n_starts points, $n_iter iterations each")
     if n_threads > 1
         println("    [grad-desc] Parallelizing across $n_threads threads (dynamic schedule)")
     else
@@ -470,8 +473,18 @@ function find_zls_gradient_descent(S::AbstractMatrix, Psi_func::Function,
         println("    ├──────┼──────────────┼──────────────" * repeat("┼──────────────", n_modes) * "┼──────────┼──────────┤")
     end
 
-    start_idx = unique(rand(1:n_snap, min(n_starts, n_snap)))
-    n_starts_actual = length(start_idx)
+    # ---- Start points: user-provided or sampled from S ------------------
+    if starts === nothing
+        start_idx = unique(rand(1:n_snap, min(n_starts, n_snap)))
+        S_starts = S[:, start_idx]            # n_dim × n_starts_actual (copy)
+        n_starts_actual = length(start_idx)
+        println("    [grad-desc] Starting from $n_starts_actual points sampled from snapshots, $n_iter iterations each")
+    else
+        @assert size(starts, 1) == n_dim "starts must be n_dim × n_starts (got size $(size(starts)); expected first dimension $n_dim)"
+        S_starts = starts
+        n_starts_actual = size(S_starts, 2)
+        println("    [grad-desc] Starting from $n_starts_actual user-provided points, $n_iter iterations each")
+    end
 
     # ---- Pre-allocate per-start result slots (one writer per slot) -----
     # Each task writes ONLY to its own index; no data race.
@@ -482,8 +495,8 @@ function find_zls_gradient_descent(S::AbstractMatrix, Psi_func::Function,
 
     # ---- Inner worker: run ONE start to convergence --------------------
     # Pure function — no shared state mutated; returns (s, f_val, converged).
-    function _run_one(i::Int, idx::Int)
-        s = copy(S[:, idx])
+    function _run_one(i::Int)
+        s = copy(S_starts[:, i])
 
         for iter in 1:n_iter
             Ψ_s = Psi_func(reshape(s, :, 1))
@@ -567,9 +580,9 @@ function find_zls_gradient_descent(S::AbstractMatrix, Psi_func::Function,
     # Tasks that finish early automatically pick up the next pending start,
     # because @spawn uses the runtime scheduler work-stealing queue.
     tasks = Vector{Task}(undef, n_starts_actual)
-    for (i, idx) in enumerate(start_idx)
+    for i in 1:n_starts_actual
         tasks[i] = @spawn begin
-            s, f_val, conv = _run_one($i, $idx)
+            s, f_val, conv = _run_one($i)
 
             # Write into OUR OWN slot (no other task touches this index)
             per_start_s[$i]    = s
