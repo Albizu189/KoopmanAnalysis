@@ -128,8 +128,8 @@ s1 = jldopen(save_path_fit, "r") do f
         :tau_delay       => f["metadata/tau_delay"],
         :n_train         => f["metadata/n_train"],
         :n_traj          => f["metadata/n_traj"],
-        :method_list     => f["metadata/method_list"],
-        :avg_rmse        => f["metadata/avg_rmse"],
+        # :method_list     => f["metadata/method_list"],
+        # :avg_rmse        => f["metadata/avg_rmse"],
     )
 end
 
@@ -160,7 +160,7 @@ cfg_fit   = res_data[:cfg]
 
 # Compute spectrum
 nK = size(K, 1)
-λ, Ξ = spectrum(K; howmany=min(1000, nK), krylovdim=min(nK, 1250))
+λ, Ξ = spectrum(K; howmany=min(2000, nK), krylovdim=min(nK, 2000))
 
 println("  Fit config: dict_type=$(cfg_fit.dict_type), r=$(cfg_fit.r)")
 println("  Operator: K $(size(K)), $(length(λ)) eigenvalues")
@@ -262,7 +262,7 @@ x0_center = [0.0,0.5]        # x0_silen by default
 fill_direction = :backward
 n_starts_modes = 1000
 n_starts_joint = 1000
-n_joint_modes_max = 7
+n_joint_modes_max = 8
 
 println("\n" * "="^60)
 println("Sampling seeds (window-integrated, $fill_direction)...")
@@ -495,7 +495,7 @@ if length(real_js_sorted) < 2
 else
     n_joint_max_actual = min(n_joint_modes_max, length(real_js_sorted))
 
-    for k in 2:n_joint_max_actual
+    for k in 1:n_joint_max_actual
         modes_k = real_js_sorted[1:k]
         println("\n--- Joint ZLS for top-$k modes: $modes_k ---")
 

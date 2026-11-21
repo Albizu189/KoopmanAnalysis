@@ -10,7 +10,7 @@
 PROJECT_DIR="/home/sofia/Documents/julia_projects/KoopmanAnalysis"
 SCRIPT_PATH="examples/Koopman_fitting_methods.jl"
 REGIME_SYSTEM="FHN"
-EXPERIMENT_TYPE="StateSpace-MediumExp-multitraj-delays"
+EXPERIMENT_TYPE="StateSpace-LargeExp-multitraj-delays"
 
 # Regimes to process SEQUENTIALLY (each gets all 32 cores).
 # Uncomment / reorder as needed.

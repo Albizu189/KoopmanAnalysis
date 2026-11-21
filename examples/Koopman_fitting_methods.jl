@@ -98,7 +98,7 @@ end
 # GLOBAL CONFIGURATION
 # ============================================================================
 
-experiment_type = "StateSpace-MediumExp-multitraj-delays"
+experiment_type = "StateSpace-LargeExp-multitraj-delays"
 regime_system   = "FHN"
 regime_name     = length(ARGS) > 0 ? ARGS[1] : "stable-limit-cycle"
 
@@ -228,8 +228,8 @@ dt_internal = 0.01
 nLag        = 10
 dt_eff      = dt_internal * nLag
 
-n_train  = 750000
-n_pred   = 5000
+n_train  = 1000000
+n_pred   = 1000
 
 m_embed   = 20
 tau_delay = 1
@@ -237,7 +237,7 @@ max_lag   = (m_embed - 1) * tau_delay
 
 burn_in  = 0   # discarded snapshots from the start of each trajectory
 
-n_traj       = 1000
+n_traj       = 2000
 window_ic    = 1.0
 
 # Length of each training trajectory (including lag buffer for delay embedding)
@@ -300,6 +300,7 @@ println("\nGenerating single continuous trajectory for HAVOK ...")
 x0_havok    = x0_silent .+ ones(length(x0_silent))
 n_havok     = n_train + max_lag + n_pred + burn_in
 X_havok_raw = rk4(f_det, x0_havok, dt_internal, n_havok; nLag=nLag)
+energy_havok = 0.9999
 
 # ============================================================================
 # TRAINING DELAY MATRIX — built per-trajectory to avoid cross-boundary leakage
@@ -342,7 +343,7 @@ F_havok = svd(H_havok)
 Σ       = F_havok.S
 total_energy = sum(Σ.^2)
 cum_energy   = cumsum(Σ.^2)
-r_havok      = findfirst(cum_energy .>= 0.999 * total_energy)
+r_havok      = findfirst(cum_energy .>= energy_havok * total_energy)
 if isnothing(r_havok)
     r_havok = length(Σ)
 end
@@ -527,13 +528,13 @@ end
 # ============================================================================
 
 method_list = [
-#    ("DMD",           "DMD (no embedding)"),
-#    ("Hankel_DMD",    "Hankel-DMD (full rank)"),
-#    ("HAVOK",         "HAVOK (continuous, RK4)"),
-#    ("Hankel_DMD_r",  "Hankel-DMD (r = HAVOK rank)"),
-#    ("EDMD",          "RBF-EDMD (no embedding)"),
-    ("Hankel_EDMD",   "Hankel RBF-EDMD (full)")
-#    ("Hankel_EDMD_r", "Hankel RBF-EDMD (r = HAVOK rank)"),
+    ("DMD",           "DMD (no embedding)"),
+    ("Hankel_DMD",    "Hankel-DMD (full rank)"),
+    ("HAVOK",         "HAVOK (continuous, RK4)"),
+    ("Hankel_DMD_r",  "Hankel-DMD (r = HAVOK rank)"),
+    ("EDMD",          "RBF-EDMD (no embedding)"),
+    ("Hankel_EDMD",   "Hankel RBF-EDMD (full)"),
+    ("Hankel_EDMD_r", "Hankel RBF-EDMD (r = HAVOK rank)"),
 ]
 
 all_results = Dict{String,Any}()
@@ -570,16 +571,6 @@ for (mid, tag) in method_list
                                n_trajectories=n_traj)
         println("  Using delay-embedded pairs: ", size(pd.S))
         res = pair_analysis(pd, cfg)
-
-        if mid == "Hankel_EDMD"
-            @assert !cfg.use_svd
-            @assert res.dict_info.centers == WORKING_CENTERS
-            @assert size(res.K) == size(WORKING_K)
-
-            rel_K_error = norm(res.K - WORKING_K) / norm(WORKING_K)
-            println("  Working centres reused: yes")
-            println("  Relative K difference from working run = ", rel_K_error)
-        end
     end
     println("  Koopman matrix size: $(size(res.K))")
 
@@ -898,8 +889,6 @@ jldopen(save_path, "a+") do f
     f["metadata/tau_delay"]           = tau_delay
     f["metadata/n_traj"]        = n_traj
     f["metadata/n_traj_test"]   = n_traj_test
-    f["metadata/test_starts_embed"] = test_starts_embed
-    f["metadata/test_starts_raw"] = test_starts_raw
     f["metadata/avg_rmse"]      = avg_rmse
     f["metadata/method_list"]   = [m for (m, _) in method_list]
 end
