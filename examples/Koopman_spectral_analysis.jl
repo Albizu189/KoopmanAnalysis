@@ -20,7 +20,7 @@ using KoopmanAnalysis.DataGeneration: sample_seeds_window_integrated
 using KoopmanAnalysis.Systems
 using KoopmanAnalysis.Hankel
 using KoopmanAnalysis.Plotting
-using KoopmanAnalysis.Spectral: select_phase_amplitude_modes
+using KoopmanAnalysis.Spectral: select_phase_amplitude_modes, koopman_eigendecomposition
 using CairoMakie
 using LinearAlgebra
 using Statistics
@@ -128,8 +128,8 @@ s1 = jldopen(save_path_fit, "r") do f
         :tau_delay       => f["metadata/tau_delay"],
         :n_train         => f["metadata/n_train"],
         :n_traj          => f["metadata/n_traj"],
-        # :method_list     => f["metadata/method_list"],
-        # :avg_rmse        => f["metadata/avg_rmse"],
+        :method_list     => f["metadata/method_list"],
+        :avg_rmse        => f["metadata/avg_rmse"],
     )
 end
 
@@ -160,7 +160,7 @@ cfg_fit   = res_data[:cfg]
 
 # Compute spectrum
 nK = size(K, 1)
-λ, Ξ = spectrum(K; howmany=min(2000, nK), krylovdim=min(nK, 2000))
+λ, Ξ = koopman_eigendecomposition(K)
 
 println("  Fit config: dict_type=$(cfg_fit.dict_type), r=$(cfg_fit.r)")
 println("  Operator: K $(size(K)), $(length(λ)) eigenvalues")

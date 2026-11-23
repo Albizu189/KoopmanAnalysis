@@ -681,7 +681,8 @@ for (mid, tag) in method_list
     # Offload heavy fields before next method
     # -----------------------------------------------------------------------
     jldopen(save_path, "a+") do f
-        offload_result!(f, res, mid)
+        res_light = offload_result!(f, res, mid)
+        f["results/$mid/res"] = res_light
     end
     GC.gc()
     print_mem("after $mid")
@@ -749,15 +750,35 @@ for (i, (mid, tag)) in enumerate(method_list)
     end
 end
 
+RMSE_CLIP_MAX = 10.0
 err_row = row_start + n_method_rows
-ax_err = Axis(fig1[err_row, :], title="Average RMSE — v(t)",
+err_title = "Average RMSE — v(t)"
+ 
+ax_err = Axis(fig1[err_row, :], title=err_title,
     xlabel="Step", ylabel="RMSE", titlesize=20, titlefont=:bold)
 
+# Per-method RMSE curves and per-method maximum displayed error:
+# each method's own peak, capped at RMSE_CLIP_MAX (variable per method,
+# at most RMSE_CLIP_MAX at any step)
+rmse_curves = Dict{String,Vector{Float64}}()
+err_max = Dict{String,Float64}()
 for (mid, _) in method_list
     X_pred = all_results[mid]["X_pred"]
     rmse_t = sqrt.(mean((X_true_ref .- X_pred).^2, dims=3))[1, :, 1]
-    lines!(ax_err, 0:n_pred, rmse_t, label=mid,
-           color=method_colors[mid], linewidth=2)
+    rmse_curves[mid] = rmse_t
+    err_max[mid] = isnothing(RMSE_CLIP_MAX) ? maximum(rmse_t) :
+                   min(maximum(rmse_t), RMSE_CLIP_MAX)
+end
+
+# Common y-limit computed from all per-method maxima
+isnothing(RMSE_CLIP_MAX) || ylims!(ax_err, 0.0, maximum(values(err_max)))
+
+for (mid, _) in method_list
+    clipped = maximum(rmse_curves[mid]) > err_max[mid]
+    lines!(ax_err, 0:n_pred, min.(rmse_curves[mid], err_max[mid]),
+           label=clipped ? "$mid (clipped)" : mid,
+           color=method_colors[mid], linewidth=2,
+           linestyle=clipped ? :dash : :solid)
 end
 axislegend(ax_err, position=:rt, framevisible=true)
 
