@@ -8,7 +8,7 @@
 # CONFIGURATION
 # ============================================================================
 PROJECT_DIR="/home/sofia/Documents/julia_projects/KoopmanAnalysis"
-SCRIPT_PATH="examples/Koopman_fitting_methods.jl"
+SCRIPT_PATH="examples/Koopman_spectral_analysis.jl"
 REGIME_SYSTEM="FHN"
 EXPERIMENT_TYPE="StateSpace-LargeExp-multitraj-delays"
 
@@ -44,7 +44,7 @@ export OMP_NUM_THREADS=1
 SAVE_DIR_PATTERN="${PROJECT_DIR}/logs/${EXPERIMENT_TYPE}"
 JULIA_BIN=$(which julia 2>/dev/null || echo "julia")
 
-SESSION_NAME="koopman_fitting_analysis"
+SESSION_NAME="koopman_spectral_analysis"
 
 # ============================================================================
 # BUILD THE INNER SHELL COMMAND THAT RUNS INSIDE tmux
@@ -65,7 +65,7 @@ for i in "${!REGIMES[@]}"; do
     REGIME="${REGIMES[$i]}"
 
     SAVE_DIR="${SAVE_DIR_PATTERN}/${REGIME_SYSTEM}-${REGIME}"
-    LOG_FILE="${SAVE_DIR}/zls_analysis_${REGIME}_full.txt"
+    LOG_FILE="${SAVE_DIR}/zls_analysis_${REGIME}_spectrum.txt"
 
     # Build the per-regime block. Use printf to avoid quoting headaches.
     BLOCK=$(cat <<EOF

@@ -45,6 +45,7 @@ println("Running with $(nthreads()) Julia threads.")
 
 const TOL_IMAG_REAL = 1e-4
 const TOL_UNITY = 1e-4
+const TOL_ZERO = 1e-3
 
 # ============================================================================
 # UTILITIES
@@ -254,7 +255,7 @@ catch e
 end
 
 # ============================================================================
-# 2. WINDOW-INTEGRATED SEED SAMPLING
+# 2. WINDOW-INTEGRATED SEED SAMPLING AND GRADIENT DESCENT SETUP
 # ============================================================================
 
 window_ic = 2.0
@@ -262,7 +263,6 @@ x0_center = [0.0,0.5]        # x0_silen by default
 fill_direction = :backward
 n_starts_modes = 1000
 n_starts_joint = 1000
-n_joint_modes_max = 8
 
 println("\n" * "="^60)
 println("Sampling seeds (window-integrated, $fill_direction)...")
@@ -289,13 +289,18 @@ S0_joint_dict = to_dict_space(S0_joint)
 
 print_mem("after seed sampling")
 
+n_joint_modes_max = 7
+const N_ITER = 10000
+const TOL_JACOBIAN = 1e-20
+
 # ============================================================================
 # 3. ZLS FOR ALL REAL EIGENVALUES
 # ============================================================================
 
 real_eig_indices = findall(x -> abs(imag(x)) < TOL_IMAG_REAL &&
                                 abs(real(x) - 1.0) > TOL_UNITY &&
-                                abs(real(x)) < 1.0, λ)
+                                abs(real(x)) < 1.0 &&
+                                abs(real(x)) > TOL_ZERO, λ)
 
 println("\nFound $(length(real_eig_indices)) real eigenvalues inside the unit circle:")
 for j in real_eig_indices
@@ -336,9 +341,9 @@ for j in real_eig_indices
     zls_pts_dict = find_zls_gradient_descent(
         S0_modes_dict, Psi_method, Ξ, j, dict_info;
         starts = S0_modes_dict,   # use our integrated seeds
-        n_iter = 1e5,
+        n_iter = N_ITER,
         lr     = 0.1,
-        tol    = 1e-20,
+        tol    = TOL_JACOBIAN,
         verbose = false,
         seed   = SEED,
     )
@@ -511,9 +516,9 @@ else
             joint_pts_dict = find_zls_gradient_descent(
                 S0_joint_dict, Psi_method, Ξ, modes_k, dict_info;
                 starts   = S0_joint_dict,
-                n_iter   = 1e5,
+                n_iter   = N_ITER,
                 lr       = 0.1,
-                tol      = 1e-20,
+                tol      = TOL_JACOBIAN,
                 verbose  = false,
                 seed     = SEED,
             )
