@@ -3,4 +3,3 @@ Project.toml
 logs/
 reports/
 results/
-run_zls_analysis_multithreads.sh
