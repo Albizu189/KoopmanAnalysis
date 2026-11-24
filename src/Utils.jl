@@ -414,6 +414,10 @@ search (Armijo condition).
 - `lr`       : base learning rate (default 0.1).
 - `tol`      : gradient-norm convergence threshold (default 1e-8).
 - `verbose`  : print iteration log for start #1 only (default true).
+- `seed`     : `nothing` (default) draws from the global RNG; an Integer seeds
+               a local `MersenneTwister` used for all internal sampling (the
+               `f_scale` estimate and the `starts` sub-sampling), making runs
+               bit-reproducible.
 
 # Returns
 - `Vector{Vector{Float64}}` of de-duplicated converged points (radius 0.05).
@@ -429,7 +433,10 @@ function find_zls_gradient_descent(S::AbstractMatrix, Psi_func::Function,
                                     starts::Union{Nothing,AbstractMatrix}=nothing,
                                     n_iter::Int=200,
                                     lr::Float64=0.1, tol::Float64=1e-8,
-                                    verbose::Bool=true)
+                                    verbose::Bool=true,
+                                    seed::Union{Integer,Nothing}=nothing)
+    rng = seed === nothing ? Random.default_rng() : MersenneTwister(seed)
+
     # ---- Normalize j_modes to a vector ---------------------------------
     if j_modes isa Integer
         j_modes = [Int(j_modes)]
@@ -454,7 +461,7 @@ function find_zls_gradient_descent(S::AbstractMatrix, Psi_func::Function,
     end
 
     # ---- Compute scale for convergence threshold -----------------------
-    sample_idx = unique(rand(1:n_snap, min(200, n_snap)))
+    sample_idx = unique(rand(rng, 1:n_snap, min(200, n_snap)))
     f_scale = 0.0
     for idx in sample_idx
         Ψ_sample = Psi_func(reshape(S[:, idx], :, 1))
@@ -475,7 +482,7 @@ function find_zls_gradient_descent(S::AbstractMatrix, Psi_func::Function,
 
     # ---- Start points: user-provided or sampled from S ------------------
     if starts === nothing
-        start_idx = unique(rand(1:n_snap, min(n_starts, n_snap)))
+        start_idx = unique(rand(rng, 1:n_snap, min(n_starts, n_snap)))
         S_starts = S[:, start_idx]            # n_dim × n_starts_actual (copy)
         n_starts_actual = length(start_idx)
         println("    [grad-desc] Starting from $n_starts_actual points sampled from snapshots, $n_iter iterations each")

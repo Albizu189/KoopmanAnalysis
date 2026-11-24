@@ -290,8 +290,12 @@ S0_joint_dict = to_dict_space(S0_joint)
 print_mem("after seed sampling")
 
 n_joint_modes_max = 7
-const N_ITER = 10000
-const TOL_JACOBIAN = 1e-20
+
+# Gradient-descent settings for all ZLS runs (recorded in the output JLD2)
+const GD_N_ITER    = 10000
+const GD_LR        = 0.1
+const GD_TOL_MODES = 1e-20
+const GD_TOL_JOINT = 1e-20
 
 # ============================================================================
 # 3. ZLS FOR ALL REAL EIGENVALUES
@@ -314,6 +318,12 @@ if !isfile(save_path_out)
         f["regime_name"]     = regime_name
         f["spectral_method"] = spectral_method
         f["SEED"]            = SEED
+        f["GD_N_ITER"]       = GD_N_ITER
+        f["GD_LR"]           = GD_LR
+        f["GD_TOL_MODES"]    = GD_TOL_MODES
+        f["GD_TOL_JOINT"]    = GD_TOL_JOINT
+        f["S0_modes"]        = S0_modes
+        f["S0_joint"]        = S0_joint
         f["lambda"]          = λ
         f["Xi"]              = Ξ
         f["dict_info"]       = dict_info
@@ -341,9 +351,9 @@ for j in real_eig_indices
     zls_pts_dict = find_zls_gradient_descent(
         S0_modes_dict, Psi_method, Ξ, j, dict_info;
         starts = S0_modes_dict,   # use our integrated seeds
-        n_iter = N_ITER,
-        lr     = 0.1,
-        tol    = TOL_JACOBIAN,
+        n_iter = GD_N_ITER,
+        lr     = GD_LR,
+        tol    = GD_TOL_MODES,
         verbose = false,
         seed   = SEED,
     )
@@ -375,6 +385,7 @@ if j_phase > 0
     println("  Period T = $(round(T_lc, digits=4)) s")
 else
     T_lc = 20.0
+    ω_lc = 2π / T_lc
     println("  Fallback period T = $T_lc s")
 end
 
@@ -399,6 +410,8 @@ println("  Delay-embedded LC: $lc_len points")
 
 jldopen(save_path_out, "a+") do f
     jld_write!(f, "S_lc_shown", S_lc_shown; overwrite=true)
+    jld_write!(f, "T_lc",       T_lc;       overwrite=true)
+    jld_write!(f, "omega_lc",   ω_lc;       overwrite=true)
 end
 
 GC.gc()
@@ -516,9 +529,9 @@ else
             joint_pts_dict = find_zls_gradient_descent(
                 S0_joint_dict, Psi_method, Ξ, modes_k, dict_info;
                 starts   = S0_joint_dict,
-                n_iter   = N_ITER,
-                lr       = 0.1,
-                tol      = TOL_JACOBIAN,
+                n_iter   = GD_N_ITER,
+                lr       = GD_LR,
+                tol      = GD_TOL_JOINT,
                 verbose  = false,
                 seed     = SEED,
             )
