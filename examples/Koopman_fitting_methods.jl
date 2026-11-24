@@ -98,11 +98,11 @@ end
 # GLOBAL CONFIGURATION
 # ============================================================================
 
-experiment_type = "StateSpace-LargeExp-multitraj-delays"
+experiment_type = "HiddenDim-LargeExp-multitraj-delays"
 regime_system   = "FHN"
 regime_name     = length(ARGS) > 0 ? ARGS[1] : "stable-limit-cycle"
 
-showdim = [1, 2]
+showdim = [1]
 n_show  = length(showdim)
 
 # --- Local path configuration (see LocalPaths.jl.example) ---
@@ -907,7 +907,7 @@ jldopen(save_path, "a+") do f
     f["metadata/n_train"]       = n_train
     f["metadata/n_pred"]        = n_pred
     f["metadata/m_embed"]       = m_embed
-    f["metadata/tau_delay"]           = tau_delay
+    f["metadata/tau_delay"]     = tau_delay
     f["metadata/n_traj"]        = n_traj
     f["metadata/n_traj_test"]   = n_traj_test
     f["metadata/avg_rmse"]      = avg_rmse

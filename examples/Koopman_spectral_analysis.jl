@@ -71,13 +71,13 @@ end
 # GLOBAL CONFIGURATION
 # ============================================================================
 
-experiment_name = "StateSpace-LargeExp-multitraj-delays"
+experiment_name = "HiddenDim-LargeExp-multitraj-delays"
 regime_system   = "FHN"
 regime_name     = length(ARGS) > 0 ? ARGS[1] : "stable-limit-cycle"
 
 spectral_method = length(ARGS) > 1 ? ARGS[2] : "Hankel_EDMD"
 
-showdim = [1, 2]
+showdim = [1]
 n_show  = length(showdim)
 
 save_dir = default_save_dir(regime_system, regime_name;
